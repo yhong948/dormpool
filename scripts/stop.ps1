@@ -35,7 +35,7 @@ $Root = Split-Path -Parent $PSScriptRoot
 $LogDir = Join-Path $Root "logs"
 
 if (-not (Test-Path $LogDir)) {
-    Write-Host "No logs/ directory — nothing was started by these scripts."
+    Write-Host "No logs/ directory -- nothing was started by these scripts."
     exit 0
 }
 

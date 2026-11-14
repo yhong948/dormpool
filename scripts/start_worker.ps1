@@ -93,8 +93,8 @@ try {
     $r = Invoke-WebRequest -Uri "$Master/ping" -UseBasicParsing -TimeoutSec 5
     Write-Host "Master  : $Master (HTTP $($r.StatusCode))" -ForegroundColor Green
 } catch {
-    Write-Error ("Cannot reach {0}/ping`n{1}`n`nCheck that the Master is running, the host is on the same LAN," -f $Master, $_.Exception.Message) `
-        "and that Windows firewall allows inbound TCP $(([Uri]$Master).Port) on the Master machine."
+    $port_ = ([Uri]$Master).Port
+    Write-Error ("Cannot reach " + $Master + "/ping`n" + $_.Exception.Message + "`n`nCheck that the Master is running, the host is on the same LAN, and that Windows firewall allows inbound TCP " + $port_ + " on the Master machine.")
     exit 1
 }
 
@@ -152,7 +152,7 @@ try {
             $me.conn_state, $me.contrib_state, $me.exec_state, `
             $me.cpu_cores, $me.ram_gb, ($(if ($me.gpu_name) { $me.gpu_name } else { "none" }))) -ForegroundColor Green
     } else {
-        Write-Warning "Worker is running but not yet listed in /workers — check $errLog"
+        Write-Warning "Worker is running but not yet listed in /workers -- check $errLog"
     }
 } catch {
     Write-Warning "Could not read /workers: $($_.Exception.Message)"
