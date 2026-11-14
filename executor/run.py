@@ -1,55 +1,73 @@
 """
 executor/run.py  —  C2 Workload Adapter entry point
 ====================================================
-Person C owns this file and executor/workload/.
+Owner: Person C.
 
-Subprocess contract (from shared/contracts.py):
+Subprocess contract (frozen — shared/contracts.py and docs/验收门禁.md):
   python executor/run.py <task_type> <input_path> <output_path> [--worker-id X]
 
-Exit codes:  0 = success,  1 = task failure,  2 = fatal error
-Last stdout line must be JSON: {"units_done": <int>, "detail": "..."}
+Exit codes:  0 = success,  1 = task-level failure,  2 = fatal error
+The LAST stdout line must be JSON: {"units_done": <int>, "detail": "..."}
 
-Steps to implement (Person C):
-  1. Register supported task types in TASK_REGISTRY below.
-  2. Implement each handler in executor/workload/<type>.py.
-  3. Each handler receives (input_path, output_path) and returns units_done.
+Task detail goes to stderr; stdout carries only the final JSON line, so the
+worker's "parse the last stdout line" rule stays unambiguous.
 """
 
-import sys, json, argparse, traceback
+import argparse
+import json
+import os
+import sys
+import traceback
 
-# ── Task registry ──────────────────────────────────────────────────────────────
+# Make the repository root importable when this file is launched as a script
+# from an arbitrary working directory (the worker always runs from the repo
+# root, but a gate or a human may not).
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
+from executor.workload.image_thumb import run as image_thumb_run  # noqa: E402
+
+# ── Task registry ────────────────────────────────────────────────────────────
 # Map task_type string → callable(input_path: str, output_path: str) -> int
-#
-# Example entry once workload is decided:
-#   from executor.workload.image_resize import run as image_resize_run
-#   TASK_REGISTRY = {"image_resize": image_resize_run}
 
-TASK_REGISTRY: dict = {}   # TODO (Person C): populate with real workload handler(s)
+TASK_REGISTRY = {
+    "image_thumb": image_thumb_run,
+}
 
 
-# ── Entry point ───────────────────────────────────────────────────────────────
+def _emit(units_done: int, detail: str) -> None:
+    """Print the contract line. Only ever called once, as the last stdout write."""
+    sys.stdout.write(json.dumps({"units_done": int(units_done), "detail": detail}) + "\n")
+    sys.stdout.flush()
 
-def main():
-    parser = argparse.ArgumentParser()
+
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(description="DormPool task executor")
     parser.add_argument("task_type")
     parser.add_argument("input_path")
     parser.add_argument("output_path")
     parser.add_argument("--worker-id", default="unknown")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     handler = TASK_REGISTRY.get(args.task_type)
     if handler is None:
-        print(json.dumps({"units_done": 0, "detail": f"unknown task_type: {args.task_type}"}))
-        sys.exit(1)
+        # Unknown type is a task-level failure: the Master may retry elsewhere
+        # but should not blame this node.
+        _emit(0, f"unknown task_type: {args.task_type}")
+        return 1
 
     try:
         units_done = handler(args.input_path, args.output_path)
-        print(json.dumps({"units_done": units_done, "detail": "ok"}))
-        sys.exit(0)
-    except Exception as exc:
-        print(json.dumps({"units_done": 0, "detail": traceback.format_exc(limit=5)}))
-        sys.exit(1)
+    except Exception:
+        detail = traceback.format_exc(limit=5)[-800:]
+        sys.stderr.write(detail)
+        _emit(0, detail.replace("\n", " | "))
+        return 1
+
+    _emit(units_done, "ok")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

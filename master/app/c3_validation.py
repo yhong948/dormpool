@@ -1,64 +1,246 @@
 """
-master/app/c3_validation.py  —  C3 Validation & Accounting
-==================================================================
-Person C owns this file.
+master/app/c3_validation.py  —  C3 Validation & Accounting (authoritative)
+===========================================================================
+Owner: Person C, executed by Master (M4/M5).
 
-Responsibility:
-  - Verify that an executor output is correct before Master confirms the Task
-  - Count valid work units (images, frames, tokens, etc.)
-  - Prevent duplicate counting across Attempts
+This is the AUTHORITATIVE validator: the Master confirms a Task only after this
+passes. It deliberately does NOT trust anything the executor self-reports — every
+number is recomputed from the bytes in the result archive.
 
-Intended for Master M4/M5 after receiving a commit. Worker-side checks may
-provide early feedback but do not replace Master-side confirmation.
+Checks performed on an image_thumb output zip:
+  1. manifest.json exists, is valid JSON, and is a list
+  2. every entry has exactly the six contract keys, with the right types
+  3. every listed output file exists in the archive, is a decodable PNG,
+     and is at most 128x128
+  4. the recorded out_w/out_h EQUAL the real dimensions of the PNG
+     (this is what catches a tampered manifest)
+  5. every output_sha256 equals the sha256 recomputed from the archive bytes
+  6. output_name is unique across the manifest (no duplicate accounting)
+  7. when the source shard is reachable, input_sha256 is re-verified against it
+     and the manifest covers exactly the shard's image set
 """
 
-from typing import Any, Optional
+from __future__ import annotations
+
+import hashlib
+import io
+import json
+import os
+import zipfile
+from typing import Any, Dict, List, Optional
+
+MANIFEST_NAME = "manifest.json"
+THUMB_DIR = "thumbs/"
+MAX_DIM = 128
+IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp", ".tif", ".tiff")
+MANIFEST_KEYS = frozenset(
+    {"input_name", "input_sha256", "output_name", "output_sha256", "out_w", "out_h"}
+)
 
 
 class ValidationError(Exception):
-    pass
+    """Raised when an executor output cannot be trusted."""
 
+
+# ── Base + registry ──────────────────────────────────────────────────────────
 
 class ResultValidator:
-    """
-    Base class for workload-specific validators.
-    Person C: subclass for each task_type and register in VALIDATORS below.
-    """
+    """Base class for workload-specific validators."""
 
     def validate(self, output_path: str, task_meta: dict) -> int:
-        """
-        Verify output file at output_path.
-
-        Args:
-            output_path: path to the executor output file
-            task_meta:   Task dict (task_id, task_type, input_ref, resource_req)
-
-        Returns:
-            Confirmed units_done (may differ from executor's self-reported value)
-
-        Raises:
-            ValidationError if output is missing, corrupt, or incorrect
-        """
         raise NotImplementedError
 
 
-# ── Registry ──────────────────────────────────────────────────────────────────
-# Map task_type → ResultValidator instance
-# TODO (Person C): populate once workload is defined
-#   from master.app.image_resize_validator import ImageResizeValidator
-#   VALIDATORS = {"image_resize": ImageResizeValidator()}
+def _sha256_hex(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
 
-VALIDATORS: dict[str, ResultValidator] = {}
+
+def _is_image_member(name: str) -> bool:
+    if name.endswith("/"):
+        return False
+    lower = name.lower()
+    if lower == MANIFEST_NAME or lower.endswith("/" + MANIFEST_NAME):
+        return False
+    return lower.endswith(IMAGE_EXTS)
+
+
+def _resolve_source_zip(task_meta: dict) -> Optional[str]:
+    """Best-effort lookup of the source shard on the Master's data root.
+
+    The result is advisory: validation still runs (and still rejects a tampered
+    manifest) when the shard cannot be found. Only the cross-check of
+    input_sha256 and the input-set equality are skipped in that case.
+    """
+    for key in ("input_abs_path", "input_path"):
+        p = task_meta.get(key)
+        if p and os.path.isfile(str(p)):
+            return str(p)
+
+    ref = task_meta.get("input_ref")
+    if not ref:
+        return None
+    root = os.environ.get("DORMPOOL_DATA", "data")
+    candidate = os.path.abspath(os.path.join(root, str(ref).replace("/", os.sep)))
+    if os.path.isfile(candidate):
+        return candidate
+    return None
+
+
+class ImageThumbValidator(ResultValidator):
+    """Authoritative validator for the frozen image_thumb workload."""
+
+    def validate(self, output_path: str, task_meta: dict) -> int:
+        units = validate_shard(_resolve_source_zip(task_meta or {}), output_path)
+        return units
+
+
+def validate_shard(source_zip: Optional[str], output_zip: str) -> int:
+    """Validate one result archive. Returns units_done. Raises ValidationError."""
+    if not output_zip or not os.path.isfile(output_zip):
+        raise ValidationError(f"result archive missing: {output_zip!r}")
+    if not zipfile.is_zipfile(output_zip):
+        raise ValidationError(f"result is not a zip archive: {output_zip!r}")
+
+    try:
+        with zipfile.ZipFile(output_zip, "r") as zout:
+            names = set(zout.namelist())
+            if MANIFEST_NAME not in names:
+                raise ValidationError("manifest.json missing from result archive")
+            raw_manifest = zout.read(MANIFEST_NAME)
+
+            try:
+                manifest = json.loads(raw_manifest.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise ValidationError(f"manifest.json is not valid JSON: {exc}") from exc
+
+            if not isinstance(manifest, list):
+                raise ValidationError("manifest.json must be a JSON list")
+            if not manifest:
+                raise ValidationError("manifest.json is empty (zero work units)")
+
+            seen_outputs: set = set()
+            seen_inputs: set = set()
+
+            for index, entry in enumerate(manifest):
+                where = f"manifest[{index}]"
+                if not isinstance(entry, dict):
+                    raise ValidationError(f"{where} is not an object")
+
+                keys = set(entry.keys())
+                if keys != MANIFEST_KEYS:
+                    missing = MANIFEST_KEYS - keys
+                    extra = keys - MANIFEST_KEYS
+                    raise ValidationError(
+                        f"{where} key mismatch: missing={sorted(missing)} extra={sorted(extra)}"
+                    )
+
+                input_name = entry["input_name"]
+                output_name = entry["output_name"]
+                out_w = entry["out_w"]
+                out_h = entry["out_h"]
+                out_sha = entry["output_sha256"]
+                in_sha = entry["input_sha256"]
+
+                if not isinstance(output_name, str) or not output_name.startswith(THUMB_DIR):
+                    raise ValidationError(f"{where} output_name must start with {THUMB_DIR!r}")
+                if not isinstance(out_w, int) or not isinstance(out_h, int):
+                    raise ValidationError(f"{where} out_w/out_h must be integers")
+                if not (1 <= out_w <= MAX_DIM and 1 <= out_h <= MAX_DIM):
+                    raise ValidationError(
+                        f"{where} dimensions out of range: {out_w}x{out_h} (max {MAX_DIM})"
+                    )
+                for label, digest in (("output_sha256", out_sha), ("input_sha256", in_sha)):
+                    if not isinstance(digest, str) or len(digest) != 64:
+                        raise ValidationError(f"{where} {label} is not a 64-char hex digest")
+
+                if output_name in seen_outputs:
+                    raise ValidationError(f"{where} duplicate output_name {output_name!r}")
+                seen_outputs.add(output_name)
+
+                if input_name in seen_inputs:
+                    raise ValidationError(f"{where} duplicate input_name {input_name!r}")
+                seen_inputs.add(input_name)
+
+                if output_name not in names:
+                    raise ValidationError(f"{where} output file absent from archive: {output_name!r}")
+
+                data = zout.read(output_name)
+                actual_sha = _sha256_hex(data)
+                if actual_sha != out_sha:
+                    raise ValidationError(
+                        f"{where} output_sha256 mismatch for {output_name!r}: "
+                        f"recorded {out_sha[:12]}… actual {actual_sha[:12]}…"
+                    )
+
+                # Decode and confirm the manifest's dimensions are the real ones.
+                real_w, real_h = _png_dimensions(data, output_name)
+                if (real_w, real_h) != (out_w, out_h):
+                    raise ValidationError(
+                        f"{where} dimension mismatch for {output_name!r}: "
+                        f"recorded {out_w}x{out_h}, actual {real_w}x{real_h}"
+                    )
+                if real_w > MAX_DIM or real_h > MAX_DIM:
+                    raise ValidationError(
+                        f"{where} thumbnail exceeds {MAX_DIM}px: {real_w}x{real_h}"
+                    )
+    except zipfile.BadZipFile as exc:
+        raise ValidationError(f"corrupt result archive: {exc}") from exc
+
+    # ── Cross-check against the source shard when it is reachable ────────────
+    if source_zip and os.path.isfile(source_zip):
+        try:
+            with zipfile.ZipFile(source_zip, "r") as zsrc:
+                src_images = {n: zsrc.read(n) for n in zsrc.namelist() if _is_image_member(n)}
+        except (zipfile.BadZipFile, OSError):
+            src_images = {}
+
+        if src_images:
+            if seen_inputs != set(src_images):
+                missing = sorted(set(src_images) - seen_inputs)
+                extra = sorted(seen_inputs - set(src_images))
+                raise ValidationError(
+                    f"manifest does not cover the shard exactly: missing={missing} extra={extra}"
+                )
+            for entry in manifest:
+                expected = _sha256_hex(src_images[entry["input_name"]])
+                if entry["input_sha256"] != expected:
+                    raise ValidationError(
+                        f"input_sha256 mismatch for {entry['input_name']!r}: "
+                        f"recorded {entry['input_sha256'][:12]}… actual {expected[:12]}…"
+                    )
+
+    return len(manifest)
+
+
+def _png_dimensions(data: bytes, label: str):
+    """Return (width, height) of PNG bytes, raising ValidationError if unreadable."""
+    try:
+        from PIL import Image
+    except ImportError as exc:  # pragma: no cover - Pillow is a hard dependency
+        raise ValidationError(f"Pillow unavailable, cannot verify {label!r}: {exc}") from exc
+
+    try:
+        with Image.open(io.BytesIO(data)) as img:
+            img.verify()                      # structural check
+        with Image.open(io.BytesIO(data)) as img:
+            return img.size
+    except Exception as exc:
+        raise ValidationError(f"{label!r} is not a decodable image: {exc}") from exc
+
+
+# ── Registry ──────────────────────────────────────────────────────────────────
+
+VALIDATORS: Dict[str, ResultValidator] = {
+    "image_thumb": ImageThumbValidator(),
+}
 
 
 def validate_result(output_path: str, task_meta: dict) -> int:
-    """
-    Validate a task result.  Returns units_done or raises ValidationError.
-    If no validator is registered for the task_type, trusts executor's report.
-    """
-    task_type = task_meta.get("task_type", "")
+    """Validate a task result. Returns units_done or raises ValidationError."""
+    task_type = (task_meta or {}).get("task_type", "")
     validator = VALIDATORS.get(task_type)
     if validator is None:
-        # No validator registered — accept executor's self-reported units_done
-        return task_meta.get("units_done", 0)
+        # No validator for this type: the Master cannot verify it. Refuse rather
+        # than silently trusting a self-reported count (G1-4 forbids that).
+        raise ValidationError(f"no validator registered for task_type {task_type!r}")
     return validator.validate(output_path, task_meta)

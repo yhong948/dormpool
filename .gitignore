@@ -4,6 +4,7 @@ __pycache__/
 .env
 data/
 worker_data/
+_tmp/
 *.out
 *.log
 .DS_Store
