@@ -26,6 +26,7 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
+from executor.workload.convnext_infer import run as convnext_run  # noqa: E402
 from executor.workload.image_thumb import run as image_thumb_run  # noqa: E402
 from executor.workload.image_thumb_gpu import (  # noqa: E402
     GpuUnavailable,
@@ -44,6 +45,7 @@ from executor.workload.image_thumb_gpu import (  # noqa: E402
 TASK_REGISTRY = {
     "image_thumb": image_thumb_run,
     "image_thumb_gpu": image_thumb_gpu_run,
+    "convnext_infer": convnext_run,
 }
 
 

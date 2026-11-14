@@ -22,6 +22,7 @@ Checks performed on an image_thumb output zip:
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import io
 import json
@@ -92,6 +93,19 @@ class ImageThumbValidator(ResultValidator):
     def validate(self, output_path: str, task_meta: dict) -> int:
         units = validate_shard(_resolve_source_zip(task_meta or {}), output_path)
         return units
+
+
+class ConvNextValidator(ResultValidator):
+    """Validator for convnext_infer output archives.
+
+    It re-derives every hash from the archive bytes and checks that each entry
+    names a logits file with the right dtype and shape. It deliberately does NOT
+    compare logits against another device's output: CPU and GPU differ in the
+    last float bits, and demanding equality would wrongly fail an honest node.
+    """
+
+    def validate(self, output_path: str, task_meta: dict) -> int:
+        return validate_convnext(_resolve_source_zip(task_meta or {}), output_path)
 
 
 def validate_shard(source_zip: Optional[str], output_zip: str) -> int:
@@ -212,6 +226,143 @@ def validate_shard(source_zip: Optional[str], output_zip: str) -> int:
     return len(manifest)
 
 
+CONVNEXT_PRED = "predictions.json"
+CONVNEXT_LOGIT_DIR = "logits/"
+CONVNEXT_KEYS = frozenset(
+    {"input_name", "input_sha256", "logits_name", "logits_sha256",
+     "top1_index", "top1_label", "top1_score"}
+)
+IMAGENET_CLASSES = 1000
+
+
+def _npy_shape(data: bytes) -> tuple:
+    """Parse the shape out of a .npy header without importing numpy.
+
+    Only the fields this validator needs are read. A malformed header is a
+    ValidationError, never a crash.
+    """
+    if len(data) < 10 or data[:6] != b"\x93NUMPY":
+        raise ValidationError("logits file is not a .npy array")
+    major = data[6]
+    header_len = int.from_bytes(data[8:10], "little") if major == 1 else int.from_bytes(data[8:12], "little")
+    start = 10 if major == 1 else 12
+    header = data[start:start + header_len].decode("latin-1", "replace")
+    try:
+        spec = ast.literal_eval(header.strip())
+    except (ValueError, SyntaxError) as exc:
+        raise ValidationError(f"unreadable .npy header: {exc}") from exc
+    return tuple(spec.get("shape") or ()), str(spec.get("descr") or "")
+
+
+def validate_convnext(source_zip: Optional[str], output_zip: str) -> int:
+    """Validate a convnext_infer result archive. Returns units_done."""
+    if not output_zip or not os.path.isfile(output_zip):
+        raise ValidationError(f"result archive missing: {output_zip!r}")
+    if not zipfile.is_zipfile(output_zip):
+        raise ValidationError(f"result is not a zip archive: {output_zip!r}")
+
+    with zipfile.ZipFile(output_zip, "r") as zout:
+        names = set(zout.namelist())
+        if CONVNEXT_PRED not in names:
+            raise ValidationError(f"{CONVNEXT_PRED} missing from result archive")
+
+        try:
+            entries = json.loads(zout.read(CONVNEXT_PRED).decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ValidationError(f"{CONVNEXT_PRED} is not valid JSON: {exc}") from exc
+        if not isinstance(entries, list):
+            raise ValidationError(f"{CONVNEXT_PRED} must be a JSON list")
+        if not entries:
+            raise ValidationError(f"{CONVNEXT_PRED} is empty (zero work units)")
+
+        seen_inputs: set = set()
+        seen_logits: set = set()
+
+        for index, entry in enumerate(entries):
+            where = f"predictions[{index}]"
+            if not isinstance(entry, dict):
+                raise ValidationError(f"{where} is not an object")
+            if set(entry.keys()) != CONVNEXT_KEYS:
+                raise ValidationError(
+                    f"{where} key mismatch: missing={sorted(CONVNEXT_KEYS - set(entry))} "
+                    f"extra={sorted(set(entry) - CONVNEXT_KEYS)}"
+                )
+
+            input_name = entry["input_name"]
+            logits_name = entry["logits_name"]
+            if not isinstance(input_name, str) or not input_name:
+                raise ValidationError(f"{where} input_name must be a non-empty string")
+            if not isinstance(logits_name, str) or not logits_name.startswith(CONVNEXT_LOGIT_DIR):
+                raise ValidationError(f"{where} logits_name must start with {CONVNEXT_LOGIT_DIR!r}")
+
+            for label in ("input_sha256", "logits_sha256"):
+                digest = entry[label]
+                if not isinstance(digest, str) or len(digest) != 64:
+                    raise ValidationError(f"{where} {label} is not a 64-char hex digest")
+
+            top1 = entry["top1_index"]
+            if not isinstance(top1, int) or not (0 <= top1 < IMAGENET_CLASSES):
+                raise ValidationError(f"{where} top1_index out of range: {top1!r}")
+            score = entry["top1_score"]
+            if not isinstance(score, (int, float)) or not (0.0 <= float(score) <= 1.0):
+                raise ValidationError(f"{where} top1_score out of range: {score!r}")
+            if not isinstance(entry["top1_label"], str):
+                raise ValidationError(f"{where} top1_label must be a string")
+
+            if input_name in seen_inputs:
+                raise ValidationError(f"{where} duplicate input_name {input_name!r}")
+            seen_inputs.add(input_name)
+            if logits_name in seen_logits:
+                raise ValidationError(f"{where} duplicate logits_name {logits_name!r}")
+            seen_logits.add(logits_name)
+
+            if logits_name not in names:
+                raise ValidationError(f"{where} logits file absent from archive: {logits_name!r}")
+
+            blob = zout.read(logits_name)
+            actual = _sha256_hex(blob)
+            if actual != entry["logits_sha256"]:
+                raise ValidationError(
+                    f"{where} logits_sha256 mismatch: recorded "
+                    f"{entry['logits_sha256'][:12]}… actual {actual[:12]}…"
+                )
+
+            shape, descr = _npy_shape(blob)
+            if shape != (IMAGENET_CLASSES,):
+                raise ValidationError(
+                    f"{where} logits shape {shape} != ({IMAGENET_CLASSES},)"
+                )
+            if not descr.startswith("<f4") and not descr.startswith("|f4"):
+                raise ValidationError(f"{where} logits dtype {descr!r} is not float32")
+
+    # ── Cross-check against the source shard when it is reachable ────────────
+    src_images: Dict[str, bytes] = {}
+    if source_zip and os.path.isfile(source_zip):
+        try:
+            with zipfile.ZipFile(source_zip, "r") as zsrc:
+                src_images = {
+                    n: zsrc.read(n) for n in zsrc.namelist() if _is_image_member(n)
+                }
+        except (zipfile.BadZipFile, OSError):
+            src_images = {}
+
+    if src_images:
+        if seen_inputs != set(src_images):
+            raise ValidationError(
+                "predictions do not cover the shard exactly: "
+                f"missing={sorted(set(src_images) - seen_inputs)} "
+                f"extra={sorted(seen_inputs - set(src_images))}"
+            )
+        for entry in entries:
+            expected = _sha256_hex(src_images[entry["input_name"]])
+            if entry["input_sha256"] != expected:
+                raise ValidationError(
+                    f"input_sha256 mismatch for {entry['input_name']!r}"
+                )
+
+    return len(entries)
+
+
 def _png_dimensions(data: bytes, label: str):
     """Return (width, height) of PNG bytes, raising ValidationError if unreadable."""
     try:
@@ -236,6 +387,10 @@ VALIDATORS: Dict[str, ResultValidator] = {
     # pixels, and that is fine: this validator recomputes hashes and verifies
     # dimensions, it never demands the pixels match the CPU implementation.
     "image_thumb_gpu": ImageThumbValidator(),
+    # ConvNeXt inference: hashes and logits shape are re-derived from the
+    # archive; logits are never compared across devices (CPU/GPU differ in the
+    # last bits and an honest node must not be failed for it).
+    "convnext_infer": ConvNextValidator(),
 }
 
 
