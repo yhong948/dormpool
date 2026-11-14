@@ -73,7 +73,7 @@ def run_benchmark(task_type: str, input_path: str, repeat: int) -> dict:
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Single-node throughput baseline")
-    parser.add_argument("--task-type", default="image_thumb")
+    parser.add_argument("--task-type", default="convnext_infer")
     parser.add_argument("--input", required=True, help="sample zip of images")
     parser.add_argument("--repeat", type=int, default=3, help="shard executions")
     args = parser.parse_args(argv)

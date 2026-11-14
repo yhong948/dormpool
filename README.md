@@ -1,7 +1,7 @@
 # DormPool — 弹性团队算力池
 
 > Campus Edge Fabric 黑客马拉松 · 方案二
-> 分支 `proto` · 工作负载：批量缩略图（`image_thumb`）
+> 默认工作负载：GPU 图像分类（`convnext_infer`）；也可选择 CPU/GPU 缩略图。
 
 把宿舍/工作室里分散的设备连成一个统一的计算服务：用户提交一个 zip 包，系统自动切分、分发到多台设备并行处理，最后把结果打包还回去。
 
@@ -59,7 +59,7 @@ WORKER_ID=worker-B WORKER_DATA=data/worker_data/worker-B python worker/main.py -
 #    http://127.0.0.1:8000/console
 ```
 
-在界面里选 `image_thumb`、传一个含图片的 zip，任务列表会出现一个 Job，进度条走完即可下载结果。
+界面默认选择 `convnext_infer`（GPU 图像分类），上传一个含图片的 zip 即可创建 Job，完成后下载分类结果。Worker 需要 GPU 环境和本地 ConvNeXt 权重，配置见 [GPU 部署说明](docs/ConvNeXt_GPU部署.md)。
 
 ### 不开浏览器也能验证
 

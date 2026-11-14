@@ -106,7 +106,7 @@ class ExecutionManager:
                      input_path, output_path) -> None:
         task_id = str(task["task_id"])
         attempt_id = str(attempt["attempt_id"])
-        task_type = str(task.get("task_type") or "image_thumb")
+        task_type = str(task.get("task_type") or "convnext_infer")
         input_ref = str(task.get("input_ref") or "")
         job_id = str(task.get("job_id") or "")
 

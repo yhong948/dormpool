@@ -135,7 +135,7 @@ def ping() -> dict:
 # ── Jobs ─────────────────────────────────────────────────────────────────────
 
 @app.post("/jobs")
-async def submit_job(task_type: str = Form(...), file: UploadFile = File(...)):
+async def submit_job(task_type: str = Form("convnext_infer"), file: UploadFile = File(...)):
     try:
         payload = await file.read()
     except Exception as exc:
