@@ -11,12 +11,42 @@
 
 ## 一分钟跑起来
 
-```bash
-# 0. 依赖
+### Windows（PowerShell）
+
+```powershell
+# 0. 依赖（切到项目根目录后执行）
 pip install -r requirements.txt
 
 # 1. 启动 Master（终端 1）
-cd f:/dormpool/dormpool
+$env:DORMPOOL_TOKEN = "dev-token"
+$env:DORMPOOL_DATA  = "data"
+$env:SHARD_SIZE     = "1"
+python -m uvicorn master.main:app --host 127.0.0.1 --port 8000
+
+# 2. 启动 Worker A（终端 2）
+$env:MASTER_URL     = "http://127.0.0.1:8000"
+$env:DORMPOOL_TOKEN = "dev-token"
+$env:MAX_SLOTS      = "1"
+$env:WORKER_ID      = "worker-A"
+$env:WORKER_DATA    = "data/worker_data/worker-A"
+python worker/main.py --headless
+
+# 3. 启动 Worker B（终端 3）
+$env:WORKER_ID   = "worker-B"
+$env:WORKER_DATA = "data/worker_data/worker-B"
+python worker/main.py --headless
+
+# 4. 打开界面
+#    http://127.0.0.1:8000/console
+```
+
+### Ubuntu / Linux（bash）
+
+```bash
+# 0. 依赖（切到项目根目录后执行）
+pip install -r requirements.txt
+
+# 1. 启动 Master（终端 1）
 export DORMPOOL_TOKEN=dev-token DORMPOOL_DATA=data SHARD_SIZE=1
 python -m uvicorn master.main:app --host 127.0.0.1 --port 8000
 
@@ -35,7 +65,9 @@ WORKER_ID=worker-B WORKER_DATA=data/worker_data/worker-B python worker/main.py -
 
 ### 不开浏览器也能验证
 
-```bash
+以下命令在 Windows 和 Ubuntu 上写法相同：
+
+```
 python tests/e2e_local.py --port 8100 --workers 2 --images 9 --shard-size 1
 python tests/g5_dynamic.py --port 8200 --images 12 --delay-ms 800   # 暂停/恢复/热加入/杀进程
 python tests/g6_measure.py --port 8300 --images 9 --delay-ms 700    # P_i / P_pool / η_pool / S

@@ -132,9 +132,11 @@ slot_release()
 dormpool> status | pause | resume | quit
 
 # 2. stdin 行命令（无 tty 时自动启用）
+# Ubuntu/Linux：
 echo pause > /proc/<pid>/fd/0
+# Windows（PowerShell）：向进程 stdin 发送命令，或用 --control-file 文件方式触发
 
-# 3. 本机 HTTP（WORKER_CONTROL_PORT 开启时）
+# 3. 本机 HTTP（WORKER_CONTROL_PORT 开启时，Windows 和 Linux 相同）
 curl 127.0.0.1:8122/status
 curl -X POST 127.0.0.1:8122/pause
 curl -X POST 127.0.0.1:8122/resume

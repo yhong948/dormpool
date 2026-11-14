@@ -112,8 +112,18 @@ POST /attempts/{id}/commit {output_ref, units_done, error_msg}
 
 ## 启动
 
+**Windows（PowerShell）**
+
+```powershell
+$env:DORMPOOL_TOKEN = "dev-token"
+$env:DORMPOOL_DATA  = "data"       # 数据根目录
+$env:SHARD_SIZE     = "3"          # 每个 Task 处理几张图（门禁用 1）
+python -m uvicorn master.main:app --host 127.0.0.1 --port 8000
+```
+
+**Ubuntu / Linux（bash）**
+
 ```bash
-cd f:/dormpool/dormpool
 export DORMPOOL_TOKEN=dev-token
 export DORMPOOL_DATA=data          # 数据根目录
 export SHARD_SIZE=3                # 每个 Task 处理几张图（门禁用 1）
