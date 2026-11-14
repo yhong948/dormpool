@@ -106,15 +106,15 @@ cpu=16 ram=31.78GB gpu=NVIDIA GeForce RTX 4060 Laptop GPU score=1|1252217.207
 ```
 claim 成功
   ↓ 新线程
-slot_acquire()
+同步 slot_acquire()，启动覆盖下载/执行/上传的续租线程
   ↓
-GET  /data/{input_ref}          下载分片到 WORKER_DATA/<task_id>/input.zip
+GET  /data/{input_ref}          下载到 WORKER_DATA/<task_id>/<attempt_id>/input.zip
   ↓
-Popen([python, executor/run.py, image_thumb, in, out, --worker-id])
-  ↓ 启动续租线程（每 5s 检查，剩余 <20s 就续）
-communicate(timeout = LEASE_DURATION - 30)
+向常驻 Executor 发送 execute 请求（Task/Attempt/Request ID 与输入输出路径）
+  ↓ 每 Worker 一个串行执行器，模型预加载并复用
+等待匹配 ID 的 result 响应（默认 90 秒上限）
   ↓
-解析 stdout 最后一行 JSON → units_done
+校验响应身份及成功状态 → units_done
   ↓
 POST /data/upload/{job_id}/{task_id}      上传结果 zip，拿到 output_ref
   ↓
@@ -123,7 +123,9 @@ POST /attempts/{id}/commit {output_ref, units_done, error_msg}
 slot_release()
 ```
 
-异常隔离：任何异常都只让这一个 Task 失败，Agent 进程和其余任务不受影响；超时的子进程会被 kill 并按失败提交。
+异常隔离：普通输入错误不重建模型；超时、协议错配、进程崩溃或 CUDA 错误会回收执行器进程树，
+当前 Attempt 按失败提交，下一个 Attempt 重建并预热。重试次数仍由 Master 控制，Worker 不内部重放任务。
+有效执行容量为 1；退出先停止领取，等待在途任务至期限后回收进程，详情见 [工作流与验收门禁](../docs/常驻Executor工作流与验收门禁.md)。
 
 ## 本地控制（W6）
 

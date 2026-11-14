@@ -56,6 +56,9 @@ def _emit(units_done: int, detail: str) -> None:
 
 
 def main(argv=None) -> int:
+    if (argv if argv is not None else sys.argv[1:]) == ["--serve"]:
+        from executor.service import serve
+        return serve(TASK_REGISTRY)
     parser = argparse.ArgumentParser(description="DormPool task executor")
     parser.add_argument("task_type")
     parser.add_argument("input_path")

@@ -86,6 +86,7 @@ class LocalControl:
             "cpu_pct": monitor.cpu_pct() if monitor else None,
             "gpu_pct": monitor.gpu_pct() if monitor else None,
             "running_tasks": executor.running_task_ids() if executor else [],
+            "executor": executor.status() if executor else None,
         }
 
     # ── REPL / stdin ─────────────────────────────────────────────────────────

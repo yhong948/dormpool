@@ -18,6 +18,7 @@ from __future__ import annotations
 import dataclasses
 import logging
 import os
+import sys
 import time
 from typing import Optional
 
@@ -138,17 +139,16 @@ class MasterConnector:
         monitor = monitor or self.agent.monitor
         # ResourceMonitor caches the sniffed capability per process.
         capability = monitor.capability(self.cfg.worker_id)
-        supported = ["image_thumb"]
-        from executor.workload.image_thumb_gpu import gpu_summary
-        from executor.workload.convnext_infer import backend_summary
-        gpu = gpu_summary()
-        convnext = backend_summary()
+        ready = self.agent.exec_mgr.prepare()
+        log.info("agent imports torch=%s cupy=%s; executor_pid=%s",
+                 "torch" in sys.modules, "cupy" in sys.modules, ready["pid"])
+        supported = ready["supported_task_types"]
+        gpu = ready["gpu"]
+        convnext = ready["convnext"]
         if gpu.get("available"):
-            supported.append("image_thumb_gpu")
             capability.gpu_name = gpu["name"]
             capability.gpu_vram_gb = gpu["vram_gb"]
         if convnext.get("available") and convnext.get("device") == "cuda":
-            supported.append("convnext_infer")
             capability.gpu_name = convnext["gpu"]
         capability.supported_task_types = supported
         log.info("executor Python=%s supported=%s CuPy=%s ConvNeXt=%s",
@@ -165,12 +165,12 @@ class MasterConnector:
     # ── heartbeat ────────────────────────────────────────────────────────────
 
     def heartbeat_loop(self) -> None:
-        while self.agent._running:
+        while not self.agent._heartbeat_stop.is_set():
             try:
                 self.send_heartbeat()
             except Exception as exc:              # never let the loop die
                 log.warning("heartbeat failed: %s", exc)
-            time.sleep(HEARTBEAT_INTERVAL)
+            self.agent._heartbeat_stop.wait(HEARTBEAT_INTERVAL)
 
     def send_heartbeat(self) -> None:
         monitor = self.agent.monitor
@@ -256,8 +256,8 @@ class MasterConnector:
 
     def renew_lease(self, attempt_id: str) -> bool:
         try:
-            self._post(f"/attempts/{attempt_id}/renew", {}, timeout=10.0)
-            return True
+            reply = self._post(f"/attempts/{attempt_id}/renew", {}, timeout=10.0)
+            return bool(reply and reply.get("lease_expires") and not reply.get("error"))
         except Exception as exc:
             log.warning("renew_lease %s failed: %s", attempt_id, exc)
             return False

@@ -4,7 +4,11 @@
 
 ## 功能
 
-把"业务计算"封装成 Worker 可以用子进程调用的标准组件。执行器完全不知道 Master 的存在，只认三个参数：任务类型、输入文件、输出文件。
+把"业务计算"封装成 Worker 可以用子进程调用的标准组件。执行器不访问 Master。
+单次 CLI 接收任务类型、输入文件、输出文件；Worker 使用 `python executor/run.py --serve` 常驻模式。
+常驻进程先探测后端、加载及预热模型，发送 `ready`，再按 JSON Lines 请求串行执行任务并返回匹配 ID 的响应。
+普通输入错误可继续处理；CUDA 错误返回 fatal 后退出，由 Agent 回收重建。
+协议和验收见 [常驻 Executor 工作流](../docs/常驻Executor工作流与验收门禁.md)。
 
 当前实现一种工作负载：**`image_thumb` — 批量缩略图**。
 

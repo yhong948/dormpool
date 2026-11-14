@@ -46,7 +46,7 @@ class AgentConfig:
                  max_slots=None, data_dir=None, control_port=None):
         self.master_url = master_url or os.environ.get("MASTER_URL", "http://127.0.0.1:8000")
         self.max_slots = int(max_slots if max_slots is not None
-                             else os.environ.get("MAX_SLOTS", "2"))
+                             else os.environ.get("MAX_SLOTS", "1"))
         self.data_dir = Path(data_dir or os.environ.get("WORKER_DATA", "worker_data"))
 
         explicit_id = worker_id or os.environ.get("WORKER_ID", "")
@@ -78,6 +78,7 @@ class AgentRuntime:
         self._draining = False
         self._stop_event = threading.Event()
         self._work_event = threading.Event()
+        self._heartbeat_stop = threading.Event()
 
         self.monitor = None
         self.contrib = None
@@ -96,6 +97,9 @@ class AgentRuntime:
 
         cfg = self.config
         cfg.prepare()
+        if cfg.max_slots != 1:
+            log.warning("resident Executor capacity is 1; requested max_slots=%s, using 1", cfg.max_slots)
+            cfg.max_slots = 1
 
         self.monitor = ResourceMonitor(cfg.max_slots)
         self.contrib = ContributionController(self.monitor)
@@ -106,25 +110,21 @@ class AgentRuntime:
         log.info("worker_id=%s master=%s max_slots=%d data=%s",
                  cfg.worker_id, cfg.master_url, cfg.max_slots, cfg.data_dir)
 
-        if not self.connector.wait_for_master():
-            log.error("Master never became reachable at %s — exiting", cfg.master_url)
-            self._running = False
-            return
-
         try:
+            if not self.connector.wait_for_master():
+                log.error("Master never became reachable at %s — exiting", cfg.master_url)
+                return
             self.connector.register()
-        except Exception as exc:
-            log.error("registration failed: %s", exc)
-            self._running = False
-            return
-
-        threading.Thread(target=self.connector.heartbeat_loop,
-                         name="heartbeat", daemon=True).start()
-
-        self.control.start()
-
-        self._task_loop()
-        log.info("agent stopped")
+            threading.Thread(target=self.connector.heartbeat_loop,
+                             name="heartbeat", daemon=True).start()
+            self.control.start()
+            self._task_loop()
+        finally:
+            self.shutdown()
+            self.exec_mgr.close()
+            self._heartbeat_stop.set()
+            self.control.stop()
+            log.info("agent stopped; Executor reaped")
 
     def pause(self) -> None:
         self._draining = True
@@ -136,11 +136,10 @@ class AgentRuntime:
     def resume(self) -> None:
         self._draining = False
         self.contrib.resume()
-        self._work_event.set()
         log.info("contrib_state -> available")
-        self._push_state_now()
+        self._push_state_now(wake=True)
 
-    def _push_state_now(self) -> None:
+    def _push_state_now(self, wake=False) -> None:
         """Send one heartbeat immediately so the Master sees the new state at once.
 
         Without this the registry keeps the previous contribution state until the
@@ -156,6 +155,9 @@ class AgentRuntime:
                 connector.send_heartbeat()
             except Exception as exc:
                 log.warning("immediate heartbeat failed: %s", exc)
+            finally:
+                if wake:
+                    self._work_event.set()
 
         threading.Thread(target=_send, name="heartbeat-now", daemon=True).start()
 
@@ -166,6 +168,8 @@ class AgentRuntime:
         self._running = False
         self._stop_event.set()
         self._work_event.set()
+        if self.exec_mgr is not None:
+            self.exec_mgr.stop_claims()
 
     def is_running(self) -> bool:
         return self._running
@@ -192,6 +196,9 @@ class AgentRuntime:
 
                 task = claimed.get("task") or {}
                 attempt = claimed.get("attempt") or {}
+                if not self._running or not self.contrib.can_accept():
+                    self.connector.commit_result(attempt["attempt_id"], "", 0, "worker paused/stopping during claim")
+                    continue
                 log.info("claimed %s (%s)", task.get("task_id"), task.get("task_type"))
                 self.exec_mgr.run_task(task, attempt, agent=self)
             except Exception as exc:

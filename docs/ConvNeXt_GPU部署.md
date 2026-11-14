@@ -40,8 +40,24 @@ GPU 依赖清单为 `requirements-gpu.txt`；普通 Master 使用 `requirements.
 结果汇总、有效工作量和指标，并停止测试进程；证据保存在 `._tmp/convnext-e2e-*`。
 它验证单机链路，不代表多物理设备性能或多机加速效果。
 
-当前推理每个 Task 启动一个子进程并加载一次权重。小分片的模型加载开销可能明显；
-吞吐评测时应记录分片大小及端到端耗时。
+当前每个 Worker 管理一个串行常驻 Executor。实际执行器在注册前完成探测、模型加载及预热，
+后续 Task 使用 JSON Lines 协议复用同一模型，Agent 不加载模型。
+有效容量固定为 1；`MaxSlots` 大于 1 时会记录警告并按 1 注册，不再创建大量模型副本。
+批量大小通过 Master 的 `-ShardSize` 调整。暂停保留模型；正常退出会回收常驻进程。
+故障时终止旧进程，当前 Attempt 上报失败，由 Master 有限重试；下一 Attempt 重建执行器。
+
+常驻执行的完整验收：
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest discover -s tests -p 'test_*.py'
+.\.venv-gpu\Scripts\python.exe tests/e2e_resident.py
+```
+
+配置项：`DORMPOOL_EXECUTOR_STARTUP_TIMEOUT`（初始化响应上限，默认 180 秒）、
+`DORMPOOL_TASK_TIMEOUT`（单任务执行响应上限，默认 90 秒）、
+`DORMPOOL_SHUTDOWN_TIMEOUT`（退出等待在途任务的期限，默认 30 秒，超期终止并回收执行器）、
+`DORMPOOL_TORCH_THREADS`（执行器 CPU 线程数，默认 2）。以上时间不作为正常任务的固定等待。
+`compute_s` 包含预处理、推理、结果打包及显式实验延时，不是纯 CUDA 核函数耗时。
 
 ## 本地两个终端启动
 
