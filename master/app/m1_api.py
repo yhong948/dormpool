@@ -7,7 +7,8 @@ The HTTP surface for Workers and users. Requests do not require credentials.
 
 Endpoint map (paths come from shared.contracts.API):
   GET  /ping                                  no auth
-  POST /jobs                                  multipart: task_type, file
+  POST /jobs                                  multipart: task_type, file,
+                                              (optional legacy measurement fields)
   GET  /jobs, /jobs/{id}, /jobs/{id}/result
   POST /workers/register
   POST /workers/{id}/heartbeat
@@ -16,7 +17,7 @@ Endpoint map (paths come from shared.contracts.API):
   GET  /data/{ref}                            traversal-safe
   POST /data/upload/{job_id}/{task_id}        multipart field "file"
   POST /attempts/{id}/renew, /attempts/{id}/commit
-  GET  /metrics/summary
+  GET  /metrics/summary[?job_id=...]          independent-baseline comparison
   GET  /console
 """
 
@@ -53,7 +54,7 @@ from master.app.m6_metrics import MetricsCollector
 REGISTRY = WorkerRegistry()
 JOBS = JobManager()
 DATA = DataManager()
-METRICS = MetricsCollector()
+METRICS = MetricsCollector(storage_path=Path(DATA.root()) / "metrics" / "measurements.json")
 SCHED = TaskScheduler(JOBS, REGISTRY)
 
 
@@ -96,15 +97,17 @@ def _on_job_completed(job_id: str) -> None:
         return
     task_ids = JOBS.succeeded_task_ids(job_id)
     ref = DATA.aggregate_job_output(job_id, task_ids)
-    if ref:
-        job = JOBS.get_job(job_id)
-        if job is not None:
-            job.output_ref = ref
-    METRICS.record_pool_job(
-        job_id=job_id,
-        created_at=ledger["created_at"],
-        finished_at=ledger["finished_at"] or time.time(),
-        units_total=ledger["units_total"],
+    job = JOBS.get_job(job_id)
+    if not ref or job is None:
+        return
+    job.output_ref = ref
+    job.result_ready_at = time.time()
+    METRICS.record_measurement(
+        job_id=job_id, mode=job.measurement_mode, task_type=job.task_type,
+        started_at=ledger["created_at"], finished_at=job.result_ready_at,
+        units_total=ledger["units_total"], successful_tasks=ledger["succeeded_attempts"],
+        profile=job.measurement_profile, workers=job.measurement_workers,
+        issues=job.measurement_issues,
     )
 
 
@@ -135,7 +138,30 @@ def ping() -> dict:
 # ── Jobs ─────────────────────────────────────────────────────────────────────
 
 @app.post("/jobs")
-async def submit_job(task_type: str = Form("convnext_infer"), file: UploadFile = File(...)):
+async def submit_job(task_type: str = Form("convnext_infer"), file: UploadFile = File(...),
+                     measurement_mode: str = Form("auto"), target_worker_id: str = Form("")):
+    if measurement_mode not in ("auto", "pool", "baseline"):
+        raise HTTPException(status_code=400, detail="measurement_mode must be auto, pool or baseline")
+    candidates = []
+    for item in REGISTRY.list_workers():
+        worker = REGISTRY.get_worker(item["worker_id"])
+        supported = worker.capability.supported_task_types if worker else None
+        if (worker and REGISTRY.can_accept_work(item["worker_id"])
+                and task_type in (supported or ["image_thumb"])):
+            candidates.append(item["worker_id"])
+    if measurement_mode == "auto":
+        measurement_mode = "baseline" if len(candidates) == 1 else "pool"
+        target_worker_id = candidates[0] if measurement_mode == "baseline" else ""
+    if measurement_mode == "baseline":
+        if not target_worker_id:
+            if len(candidates) == 1:
+                target_worker_id = candidates[0]
+            else:
+                raise HTTPException(status_code=400, detail="单机基准需要只保留一台可用设备")
+        if target_worker_id not in candidates:
+            raise HTTPException(status_code=400, detail="目标设备不可用或不支持该任务类型")
+    elif target_worker_id:
+        raise HTTPException(status_code=400, detail="target_worker_id 只用于单机基准")
     try:
         payload = await file.read()
     except Exception as exc:
@@ -158,17 +184,24 @@ async def submit_job(task_type: str = Form("convnext_infer"), file: UploadFile =
     input_ref = await run_in_threadpool(
         DATA.save_input, job_id, file.filename or "input.zip", payload
     )
-    refs = await run_in_threadpool(DATA.split_job_input, job_id, input_ref, shard_size())
+    size = shard_size()
+    refs = await run_in_threadpool(DATA.split_job_input, job_id, input_ref, size)
     if not refs:
         raise HTTPException(status_code=400, detail="no images found in the uploaded archive")
 
-    job = JOBS.create_job(task_type, refs, input_zip_ref=input_ref, job_id=job_id)
+    fingerprint = await run_in_threadpool(DATA.input_fingerprint, input_ref)
+    job = JOBS.create_job(task_type, refs, input_zip_ref=input_ref, job_id=job_id,
+                          measurement_mode=measurement_mode,
+                          target_worker_id=target_worker_id or None,
+                          measurement_profile={"dataset_sha256": fingerprint, "shard_size": size,
+                                               "correctness": "validated-output-v1"})
 
     return {
         "job_id": job.job_id,
         "total_tasks": job.total_tasks,
         "status": job.status.value,
         "task_type": job.task_type,
+        "measurement_mode": job.measurement_mode,
     }
 
 
@@ -249,6 +282,7 @@ def register_worker(body: dict):
             max_slots=int(body.get("max_slots") or 1),
             executor_version=str(body.get("executor_version") or "1"),
             supported_task_types=body.get("supported_task_types"),
+            measurement_config=dict(body.get("measurement_config") or {}),
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=f"invalid capability: {exc}")
@@ -347,8 +381,11 @@ def commit_result(attempt_id: str, body: dict):
 # ── Metrics ──────────────────────────────────────────────────────────────────
 
 @app.get("/metrics/summary")
-def metrics_summary():
-    return METRICS.summary()
+def metrics_summary(job_id: Optional[str] = None):
+    try:
+        return METRICS.summary(job_id=job_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="pool measurement not found")
 
 
 # ── Console ──────────────────────────────────────────────────────────────────

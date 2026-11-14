@@ -70,6 +70,7 @@ class WorkerCapability:
     max_slots:        int             = 1    # max concurrent tasks this node accepts
     executor_version: str             = "1"
     supported_task_types: Optional[list[str]] = None
+    measurement_config: dict = field(default_factory=dict)
 
 @dataclass
 class WorkerHeartbeat:
@@ -94,6 +95,13 @@ class Job:
     created_at:  float          = field(default_factory=time.time)
     finished_at: Optional[float]= None
     output_ref:  Optional[str]  = None
+    measurement_mode: str       = "pool"  # pool | baseline
+    target_worker_id: Optional[str] = None
+    measurement_profile: dict = field(default_factory=dict)
+    measurement_workers: dict = field(default_factory=dict)
+    measurement_issues: list[str] = field(default_factory=list)
+    started_at: Optional[float] = None
+    result_ready_at: Optional[float] = None
 
 @dataclass
 class Task:

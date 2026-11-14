@@ -29,6 +29,7 @@ from shared.contracts import (
     AttemptStatus,
     LEASE_DURATION,
     TaskStatus,
+    JobStatus,
 )
 
 # Hooks installed by the composition root to avoid import cycles.
@@ -97,9 +98,34 @@ class TaskScheduler:
             if not self._registry.can_accept_work(worker_id):
                 return None
 
+            # A baseline owns the service until it finishes. Drain existing
+            # attempts first, then run only its designated device. This makes
+            # the measurements sequential even when all devices stay online.
+            baselines = [j for j in self._jobs.list_jobs()
+                         if j["measurement_mode"] == "baseline"
+                         and j["status"] in ("queued", "running")]
+            baseline = min(baselines, key=lambda j: j["created_at"]) if baselines else None
+            if baseline:
+                for record in self._attempts.values():
+                    if record["status"] != AttemptStatus.RUNNING.value:
+                        continue
+                    active_task = self._jobs.get_task(record["task_id"])
+                    if active_task and active_task.job_id != baseline["job_id"]:
+                        return None
+                if worker_id != baseline["target_worker_id"]:
+                    return None
+
             for task in self._jobs.pending_tasks():
+                job = self._jobs.get_job(task.job_id)
+                if baseline and task.job_id != baseline["job_id"]:
+                    continue
+                if job.target_worker_id and job.target_worker_id != worker_id:
+                    continue
                 if not self._worker_matches(worker, task):
                     continue
+
+                participants = {worker_id: self._measurement_config(worker)}
+                self._jobs.record_measurement_assignment(job.job_id, participants)
 
                 attempt = Attempt(
                     task_id=task.task_id,
@@ -126,6 +152,12 @@ class TaskScheduler:
         if _on_attempt_created and created_attempt_id:
             _safe(_on_attempt_created, created_attempt_id)
         return payload
+
+    @staticmethod
+    def _measurement_config(worker) -> dict:
+        cap = worker.capability
+        return {"hostname": cap.hostname, "gpu_name": cap.gpu_name,
+                "max_slots": cap.max_slots, "runtime": cap.measurement_config}
 
     @staticmethod
     def _task_payload(task) -> dict:

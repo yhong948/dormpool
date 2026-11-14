@@ -116,6 +116,7 @@
       <div class="kpi"><span>P_pool</span><b id="kPool">—</b></div>
       <div class="kpi"><span>成功任务</span><b id="kRecords">—</b></div>
     </div>
+    <div class="msg muted" id="metricNote">η_pool 和 S 需要匹配的独立单机基准。</div>
     <table>
       <thead><tr><th>设备</th><th>P_i 单机吞吐 (units/s)</th><th style="width:38%">相对</th></tr></thead>
       <tbody id="metricsBody"><tr><td colspan="3" class="muted">暂无数据</td></tr></tbody>
@@ -233,7 +234,7 @@
           return r.json();
         });
       msg.className = "msg ok";
-      msg.textContent = "已提交 " + data.job_id + " · " + data.total_tasks + " 个任务";
+      msg.textContent = "已提交 " + data.job_id + " · " + data.total_tasks + " 个任务（自动测量）";
       el("inputFile").value = "";
       loadJobs();
     } catch (error) {
@@ -366,7 +367,10 @@
   }
 
   async function loadWorkers() {
-    try { renderWorkers(await call("/workers")); reportOk(); }
+    try {
+      const payload = await call("/workers");
+      renderWorkers(payload); reportOk();
+    }
     catch (error) { reportFail(error); }
   }
 
@@ -379,6 +383,11 @@
       ? "—" : Number(m.speedup_S).toFixed(2) + "×";
     el("kPool").textContent = m.p_pool ? Number(m.p_pool).toFixed(2) : "—";
     el("kRecords").textContent = m.total_records === undefined ? "—" : m.total_records;
+    el("kEta").title = m.baseline_comparable ? "独立单机基准对比" : "需先完成匹配的单机基准";
+    el("kS").title = m.baseline_comparable ? "独立单机基准对比" : "需先完成匹配的单机基准";
+    el("metricNote").textContent = m.baseline_comparable
+      ? "P_i 来自独立单机基准；P_pool 来自本次池化作业墙钟。"
+      : "η_pool 和 S 暂不计算：请对每个实际参与池化的设备，用相同输入、分片大小和校验标准完成单机基准。";
 
     const perDevice = m.per_device_throughput || {};
     const keys = Object.keys(perDevice).sort();

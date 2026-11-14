@@ -18,6 +18,7 @@ write outside the data root.
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import re
 import shutil
@@ -147,6 +148,17 @@ class DataManager:
                 return sum(1 for n in zin.namelist() if _is_image_member(n))
         except (zipfile.BadZipFile, OSError):
             return 0
+
+    def input_fingerprint(self, input_ref: str) -> str:
+        """Fingerprint image names and bytes, independently of ZIP compression."""
+        digest = hashlib.sha256()
+        with zipfile.ZipFile(self.resolve_path(input_ref)) as archive:
+            for name in sorted(n for n in archive.namelist() if _is_image_member(n)):
+                encoded = name.encode("utf-8")
+                digest.update(len(encoded).to_bytes(8, "big"))
+                digest.update(encoded)
+                digest.update(hashlib.sha256(archive.read(name)).digest())
+        return digest.hexdigest()
 
     # ── outputs ──────────────────────────────────────────────────────────────
 

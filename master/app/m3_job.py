@@ -62,7 +62,9 @@ class JobManager:
     # ── creation ─────────────────────────────────────────────────────────────
 
     def create_job(self, task_type: str, input_refs: List[str],
-                   input_zip_ref: str = "", job_id: Optional[str] = None) -> Job:
+                   input_zip_ref: str = "", job_id: Optional[str] = None,
+                   measurement_mode: str = "pool", target_worker_id: Optional[str] = None,
+                   measurement_profile: Optional[dict] = None) -> Job:
         """Create a Job whose Tasks are one per shard reference.
 
         input_refs is produced by M5 when it splits the uploaded archive.
@@ -76,6 +78,9 @@ class JobManager:
             input_ref=input_zip_ref or (input_refs[0] if input_refs else ""),
             status=JobStatus.QUEUED,
             total_tasks=total,
+            measurement_mode=measurement_mode,
+            target_worker_id=target_worker_id,
+            measurement_profile=measurement_profile or {},
         )
         tasks = [
             Task(
@@ -93,6 +98,17 @@ class JobManager:
                 self._task_index[task.task_id] = task
                 self._attempts[task.task_id] = []
         return job
+
+    def record_measurement_assignment(self, job_id: str, workers: dict) -> None:
+        with self._lock:
+            job = self._jobs[job_id]
+            if job.started_at is None:
+                job.started_at = time.time()
+            for worker_id, config in workers.items():
+                old = job.measurement_workers.get(worker_id)
+                if old is not None and old != config and "configuration_changed" not in job.measurement_issues:
+                    job.measurement_issues.append("configuration_changed")
+                job.measurement_workers[worker_id] = config
 
     # ── queries ──────────────────────────────────────────────────────────────
 
@@ -202,6 +218,8 @@ class JobManager:
                 raise ValueError("completed or failed jobs cannot be paused or resumed")
             if paused:
                 job.status = JobStatus.PAUSED
+                if "paused" not in job.measurement_issues:
+                    job.measurement_issues.append("paused")
             elif job.status == JobStatus.PAUSED:
                 started = any(self._attempts.get(t.task_id) for t in self._tasks[job_id])
                 job.status = JobStatus.RUNNING if started else JobStatus.QUEUED

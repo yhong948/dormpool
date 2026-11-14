@@ -83,13 +83,16 @@ class Env:
             time.sleep(1)
         raise RuntimeError(f"{names} not online")
 
-    def submit(self, zip_path):
-        body, headers = multipart({"task_type": "image_thumb"}, "file",
+    def submit(self, zip_path, measurement_mode="pool", target_worker_id=""):
+        fields = {"task_type": "image_thumb", "measurement_mode": measurement_mode}
+        if target_worker_id:
+            fields["target_worker_id"] = target_worker_id
+        body, headers = multipart(fields, "file",
                                   zip_path.name, zip_path.read_bytes())
         return http_json(f"{self.base}/jobs", "POST", body, headers)["job_id"]
 
-    def run_job(self, zip_path, timeout=300):
-        job_id = self.submit(zip_path)
+    def run_job(self, zip_path, timeout=300, measurement_mode="pool", target_worker_id=""):
+        job_id = self.submit(zip_path, measurement_mode, target_worker_id)
         end = time.time() + timeout
         while time.time() < end:
             job = http_json(f"{self.base}/jobs/{job_id}")
@@ -103,8 +106,9 @@ class Env:
             self.stop_worker(name)
 
 
-def measure(env, zip_path, label):
-    job = env.run_job(zip_path)
+def measure(env, zip_path, label, measurement_mode="pool", target_worker_id=""):
+    job = env.run_job(zip_path, measurement_mode=measurement_mode,
+                      target_worker_id=target_worker_id)
     wall = float(job["finished_at"]) - float(job["created_at"])
     units = sum(int(a.get("units_done") or 0)
                 for t in job["tasks"] for a in t.get("attempts", [])
@@ -142,22 +146,24 @@ def main(argv=None):
         env.start_worker("worker-A")
         env.wait_online({"worker-A"})
         print(f"[single] only worker-A alive, {args.images} images")
-        single = measure(env, input_zip, "single")
-        assert single["job"]["status"] == "completed", single["job"]["status"]
-        s_single = single["summary"]["speedup_S"]
-        assert s_single is not None, "no speedup reported for the single-node run"
-        assert 0.8 <= s_single <= 1.25, f"single-worker S={s_single}, expected ~1.0"
-        report["single"] = {"wall": single["wall"], "units": single["units"],
-                            "rate": single["rate"], "S": s_single,
-                            "per_device": single["summary"]["per_device_throughput"]}
+        baseline_a = measure(env, input_zip, "baseline-A", "baseline", "worker-A")
+        assert baseline_a["job"]["status"] == "completed", baseline_a["job"]["status"]
+        report["baseline-A"] = {"wall": baseline_a["wall"], "units": baseline_a["units"],
+                                "rate": baseline_a["rate"]}
 
         env.start_worker("worker-B")
         env.wait_online({"worker-A", "worker-B"})
         print(f"[pool] both workers alive, same input")
-        pool = measure(env, input_zip, "pool")
+        baseline_b = measure(env, input_zip, "baseline-B", "baseline", "worker-B")
+        assert baseline_b["job"]["status"] == "completed", baseline_b["job"]["status"]
+        report["baseline-B"] = {"wall": baseline_b["wall"], "units": baseline_b["units"],
+                                "rate": baseline_b["rate"]}
+
+        pool = measure(env, input_zip, "pool", "pool")
         assert pool["job"]["status"] == "completed", pool["job"]["status"]
         s_pool = pool["summary"]["speedup_S"]
         assert s_pool is not None and s_pool > 0, s_pool
+        assert pool["summary"]["per_device_source"] == "independent_baseline"
 
         # P_pool must come from the wall clock, not from ΣP_i.
         assert pool["summary"]["p_pool_source"] == "pool_wall_clock", \

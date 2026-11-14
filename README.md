@@ -177,7 +177,7 @@ Worker 不需要开放任何网络端口，天然穿过 NAT 和防火墙；空�
 S      = P_pool / max(P_i)            相对最强单机的加速比
 ```
 
-**P_pool 必须独立测量**——用池化作业的墙钟（`finished_at - created_at`），而不是把各设备吞吐加起来。否则 S 会恒等于节点数，指标失去意义。代码里对这一点有显式断言（`p_pool_source == "pool_wall_clock"`）。
+**P_pool 必须独立测量**——用池化作业的墙钟（`result_ready_at - created_at`），而不是把各设备吞吐加起来。P_i 只能来自相同任务类型、输入指纹、分片大小、校验标准和运行配置下的独立“单机基准”作业；没有匹配基准时 η_pool 和 S 显示为空，不伪造比较结果。代码里对 P_pool 的来源保留显式标记（`p_pool_source == "pool_wall_clock"`）。
 
 本机实测（同机双进程，`delay=700ms`，9 张图）：
 
