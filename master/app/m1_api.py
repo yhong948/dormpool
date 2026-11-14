@@ -30,7 +30,7 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Response, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 
 from shared.contracts import (
@@ -270,7 +270,7 @@ def claim_task(worker_id: str, body: dict = None):
     free_slots = int((body or {}).get("free_slots") or 1)
     assigned = SCHED.assign_task(worker_id, free_slots)
     if assigned is None:
-        return JSONResponse(status_code=204, content=None)
+        return Response(status_code=204)
     return assigned
 
 

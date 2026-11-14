@@ -182,11 +182,20 @@ class MasterConnector:
             cpu_pct=monitor.cpu_pct(),
             gpu_pct=monitor.gpu_pct(),
         )
-        self._post(
-            f"/workers/{self.cfg.worker_id}/heartbeat",
-            dataclasses.asdict(heartbeat),
-            timeout=10.0,
-        )
+        try:
+            self._post(
+                f"/workers/{self.cfg.worker_id}/heartbeat",
+                dataclasses.asdict(heartbeat),
+                timeout=10.0,
+            )
+        except requests.HTTPError as exc:
+            status = getattr(getattr(exc, "response", None), "status_code", None)
+            if status == 404:
+                # Master restarted and lost our registration — re-register now.
+                log.warning("heartbeat 404: Master does not know us, re-registering")
+                self.register()
+            else:
+                raise
 
     # ── tasks ────────────────────────────────────────────────────────────────
 
