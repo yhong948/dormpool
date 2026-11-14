@@ -1,5 +1,5 @@
 """
-executor/workload/c3_validation.py  —  C3 Validation & Accounting
+master/app/c3_validation.py  —  C3 Validation & Accounting
 ==================================================================
 Person C owns this file.
 
@@ -8,8 +8,8 @@ Responsibility:
   - Count valid work units (images, frames, tokens, etc.)
   - Prevent duplicate counting across Attempts
 
-Called by Master M4/M5 after receiving a commit, OR by the executor itself
-before writing its output (preferred for fast fail).
+Intended for Master M4/M5 after receiving a commit. Worker-side checks may
+provide early feedback but do not replace Master-side confirmation.
 """
 
 from typing import Any, Optional
@@ -45,7 +45,7 @@ class ResultValidator:
 # ── Registry ──────────────────────────────────────────────────────────────────
 # Map task_type → ResultValidator instance
 # TODO (Person C): populate once workload is defined
-#   from executor.workload.image_resize_validator import ImageResizeValidator
+#   from master.app.image_resize_validator import ImageResizeValidator
 #   VALIDATORS = {"image_resize": ImageResizeValidator()}
 
 VALIDATORS: dict[str, ResultValidator] = {}

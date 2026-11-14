@@ -4,6 +4,8 @@
 
 把宿舍/工作室里的设备连起来，对外提供一个统一计算服务。
 
+> 当前为未完成的代码骨架，并非可运行的完整计算服务：工作负载、数据上传和结果确认等尚未打通。下面的启动命令仅供后续实现时参考，不能作为现阶段验收说明。架构与部署边界见 [资源结构分析](资源结构分析.md)。
+
 ---
 
 ## 目录结构与人员分工
@@ -21,7 +23,8 @@ dormpool/
 │       ├── m3_job.py     M3 Job Manager (Job 创建、拆分、进度)
 │       ├── m4_scheduler.py M4 Task Scheduler (分配、租约、重试)
 │       ├── m5_data.py    M5 Data & Result Manager
-│       └── m6_metrics.py  M6 Metrics Collector (η_pool, S)
+│       ├── m6_metrics.py  M6 Metrics Collector (η_pool, S)
+│       └── c3_validation.py C3 Master 侧结果验证骨架
 │
 ├── worker/            ← 👤 Person B 负责
 │   ├── main.py           启动入口
@@ -36,7 +39,6 @@ dormpool/
 ├── executor/          ← 👤 Person C 负责
 │   ├── run.py            C2 子进程入口 (task_type input output)
 │   └── workload/
-│       ├── c3_validation.py  C3 结果验证与有效工作量统计
 │       └── example_handler.py 新 workload 实现模板
 │
 ├── console/           ← 👤 Person C 负责
@@ -62,7 +64,9 @@ dormpool/
 
 ## 快速启动
 
-### 1. 安装依赖（三台机器各跑一次）
+以下命令依赖后续实现完成；目前 `requirements.txt` 是两端共用的开发依赖，并不代表每端都需要全部依赖。
+
+### 1. 安装开发依赖
 
 ```bash
 pip install -r requirements.txt
@@ -71,7 +75,7 @@ pip install -r requirements.txt
 ### 2. 启动 Master（Person A 的机器）
 
 ```bash
-cd f:/dormpool/dormpool
+cd <仓库根目录>
 set DORMPOOL_TOKEN=yourtoken   # Windows
 uvicorn master.main:app --host 0.0.0.0 --port 8000
 ```
@@ -81,7 +85,7 @@ uvicorn master.main:app --host 0.0.0.0 --port 8000
 ### 3. 启动 Worker（每台从机）
 
 ```bash
-cd f:/dormpool/dormpool
+cd <仓库根目录>
 set MASTER_URL=http://<master-ip>:8000
 set DORMPOOL_TOKEN=yourtoken
 set WORKER_ID=worker-A       # 每台不同
