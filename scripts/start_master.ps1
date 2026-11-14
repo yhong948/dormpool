@@ -49,6 +49,7 @@ param(
     [string]$Token,
     [string]$DataDir = "data",
     [int]$ShardSize = 1,
+    [switch]$KillIfBusy,
     [switch]$Foreground
 )
 
@@ -94,8 +95,37 @@ if ($Bind -in @("0.0.0.0", "::", "*")) {
 # ── port preflight ───────────────────────────────────────────────────────────
 $busy = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
 if ($busy) {
-    Write-Error ("Port {0} is already in use by PID {1}.`nStop it first:  Stop-Process -Id {1} -Force" -f $Port, $busy.OwningProcess)
-    exit 1
+    $pid_ = $busy.OwningProcess
+    $proc = Get-CimInstance Win32_Process -Filter "ProcessId=$pid_" -ErrorAction SilentlyContinue
+    $cmd  = if ($proc) { $proc.CommandLine } else { "unknown process" }
+
+    if ($KillIfBusy) {
+        Write-Host "Port $Port is in use by PID $pid_ -- stopping it..." -ForegroundColor Yellow
+        Write-Host "  $cmd" -ForegroundColor DarkGray
+        Stop-Process -Id $pid_ -Force -ErrorAction SilentlyContinue
+        Start-Sleep -Milliseconds 800
+        $still = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
+        if ($still) {
+            Write-Error "Port $Port is still in use after stopping PID $pid_."
+            exit 1
+        }
+        Write-Host "Port $Port is now free." -ForegroundColor Green
+    } else {
+        Write-Host ""
+        Write-Host "  Port $Port is already in use:" -ForegroundColor Red
+        Write-Host "  PID $pid_  :  $cmd" -ForegroundColor Red
+        Write-Host ""
+        Write-Host "  Option 1 (recommended): pass -KillIfBusy to stop it automatically:" -ForegroundColor Yellow
+        Write-Host "    .\scripts\start_master.ps1 -KillIfBusy" -ForegroundColor Cyan
+        Write-Host ""
+        Write-Host "  Option 2: stop it manually, then re-run:" -ForegroundColor Yellow
+        Write-Host ("    Stop-Process -Id " + $pid_ + " -Force") -ForegroundColor Cyan
+        Write-Host ""
+        Write-Host "  Option 3: use a different port (update Worker and browser too):" -ForegroundColor Yellow
+        Write-Host "    .\scripts\start_master.ps1 -Port 8001" -ForegroundColor Cyan
+        Write-Host ""
+        exit 1
+    }
 }
 
 # ── data dir ─────────────────────────────────────────────────────────────────
@@ -146,5 +176,5 @@ try {
     Write-Host "Health  : HTTP $($r.StatusCode) $($r.Content)" -ForegroundColor Green
 } catch {
     Write-Warning "Ping failed: $($_.Exception.Message)"
-    Write-Warning "On a LAN address this is usually the Windows firewall; allow inbound TCP $Port."
+    Write-Warning ("On a LAN address this is usually the Windows firewall; allow inbound TCP " + $Port + ".")
 }
