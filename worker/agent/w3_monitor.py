@@ -368,7 +368,10 @@ class ResourceMonitor:
         if not _PSUTIL:
             return None
         try:
-            return float(psutil.cpu_percent(interval=0.3))
+            # interval=None returns immediately, comparing against the previous
+            # call. A blocking 0.3s sample would eat 60% of the 0.5s heartbeat
+            # period and stall the beat, which now defines offline detection.
+            return float(psutil.cpu_percent(interval=None))
         except Exception:
             return None
 

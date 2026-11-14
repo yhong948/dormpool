@@ -32,6 +32,7 @@ from typing import Optional
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Response, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
+from starlette.concurrency import run_in_threadpool
 
 from shared.contracts import (
     WorkerCapability,
@@ -167,8 +168,14 @@ async def submit_job(task_type: str = Form(...), file: UploadFile = File(...)):
 
     # Allocate the id up front so the upload and its shards live under one folder.
     job_id = "job-" + uuid.uuid4().hex[:8]
-    input_ref = DATA.save_input(job_id, file.filename or "input.zip", payload)
-    refs = DATA.split_job_input(job_id, input_ref, shard_size())
+    # Writing the archive and splitting it are blocking disk work. This handler
+    # is `async def`, so running them inline would occupy the event loop for the
+    # whole split — every heartbeat and console poll queues behind it and a
+    # dead-looking node is marked OFFLINE. Push them to the threadpool.
+    input_ref = await run_in_threadpool(
+        DATA.save_input, job_id, file.filename or "input.zip", payload
+    )
+    refs = await run_in_threadpool(DATA.split_job_input, job_id, input_ref, shard_size())
     if not refs:
         raise HTTPException(status_code=400, detail="no images found in the uploaded archive")
 
@@ -296,7 +303,8 @@ async def upload_output(job_id: str, task_id: str, file: UploadFile = File(...))
         raise HTTPException(status_code=400, detail="empty upload")
     if not payload.startswith(b"PK"):
         raise HTTPException(status_code=400, detail="result must be a zip archive")
-    ref = DATA.save_task_output(job_id, task_id, payload)
+    # Blocking write — keep it off the event loop (see submit_job for why).
+    ref = await run_in_threadpool(DATA.save_task_output, job_id, task_id, payload)
     return {"output_ref": ref}
 
 

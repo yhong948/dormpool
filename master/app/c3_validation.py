@@ -232,6 +232,10 @@ def _png_dimensions(data: bytes, label: str):
 
 VALIDATORS: Dict[str, ResultValidator] = {
     "image_thumb": ImageThumbValidator(),
+    # Same archive contract and same checks. The GPU path produces different
+    # pixels, and that is fine: this validator recomputes hashes and verifies
+    # dimensions, it never demands the pixels match the CPU implementation.
+    "image_thumb_gpu": ImageThumbValidator(),
 }
 
 

@@ -246,10 +246,10 @@ class WorkerRegistry:
     # ── expiry ───────────────────────────────────────────────────────────────
 
     def _expire_loop(self) -> None:
-        # Worst-case detection latency is WORKER_TIMEOUT + interval. G5-D requires
-        # offline within 45s, so the interval must stay under 10s; a
-        # WORKER_TIMEOUT/2 (17.5s) scan could take 52.5s and miss that bound.
-        interval = max(1.0, min(WORKER_TIMEOUT / 4.0, 10.0))
+        # Worst-case detection latency is WORKER_TIMEOUT + interval. With the
+        # 2s timeout that has to stay near the timeout itself, so the scan runs
+        # at half the timeout (1s) and a dead node is marked offline within 3s.
+        interval = max(0.25, min(WORKER_TIMEOUT / 2.0, 10.0))
         while not self._stop.wait(interval):
             self.scan_expired()
 

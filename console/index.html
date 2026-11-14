@@ -134,7 +134,9 @@
 
   document.getElementById("endpoint").textContent = "API: " + (MASTER || window.location.origin);
 
-  const REQ = { jobs: 3000, workers: 3000, metrics: 5000 };
+  // workers poll fast enough to show a node going offline within a couple of
+  // seconds; jobs/metrics change far less often and stay on slower cycles.
+  const REQ = { jobs: 1500, workers: 1000, metrics: 3000 };
   const timers = {};
   let lastData = { jobs: [], workers: [], metrics: null };
 
@@ -157,10 +159,42 @@
     return '<span class="badge ' + cls + '">' + esc(text) + "</span>";
   }
 
-  function showBanner(on) { el("banner").style.display = on ? "block" : "none"; }
+  // The banner is a connection-health signal, not a per-request error log.
+  // A single slow poll (browser tab wake-up, one blocking write on the Master)
+  // must not flash "connection lost": require consecutive failures across the
+  // pollers before showing it, and clear it as soon as any poll succeeds.
+  const FAILURES_BEFORE_BANNER = 2;
+  let consecutiveFailures = 0;
+  function reportOk() {
+    consecutiveFailures = 0;
+    el("banner").style.display = "none";
+  }
+  function reportFail(error) {
+    consecutiveFailures += 1;
+    if (consecutiveFailures >= FAILURES_BEFORE_BANNER) {
+      el("banner").style.display = "block";
+      if (error) el("banner").title = String(error.message || error);
+    }
+  }
 
+  // fetch() has no timeout of its own. Without one, a request against a stalled
+  // server can hang until the browser gives up (minutes), and the next interval
+  // starts another one on top of it.
+  const REQ_TIMEOUT = 8000;
   async function call(path, options) {
-    const response = await fetch(MASTER + path, Object.assign({ headers: headers }, options || {}));
+    const opts = Object.assign({ headers: headers }, options || {});
+    const controller = new AbortController();
+    const timer = setTimeout(function () { controller.abort(); }, REQ_TIMEOUT);
+    opts.signal = controller.signal;
+    let response;
+    try {
+      response = await fetch(MASTER + path, opts);
+    } catch (error) {
+      if (error.name === "AbortError") throw new Error("请求超时（" + REQ_TIMEOUT + "ms）");
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
     if (!response.ok) {
       const text = await response.text();
       throw new Error("HTTP " + response.status + " " + text.slice(0, 200));
@@ -241,8 +275,8 @@
   }
 
   async function loadJobs() {
-    try { renderJobs(await call("/jobs")); showBanner(false); }
-    catch (error) { showBanner(true); }
+    try { renderJobs(await call("/jobs")); reportOk(); }
+    catch (error) { reportFail(error); }
   }
 
   // ── workers ──────────────────────────────────────────────────────────────
@@ -277,8 +311,8 @@
   }
 
   async function loadWorkers() {
-    try { renderWorkers(await call("/workers")); showBanner(false); }
-    catch (error) { showBanner(true); }
+    try { renderWorkers(await call("/workers")); reportOk(); }
+    catch (error) { reportFail(error); }
   }
 
   // ── metrics ──────────────────────────────────────────────────────────────
@@ -323,18 +357,35 @@
   }
 
   async function loadMetrics() {
-    try { renderMetrics(await call("/metrics/summary")); }
-    catch (error) { showBanner(true); }
+    try { renderMetrics(await call("/metrics/summary")); reportOk(); }
+    catch (error) { reportFail(error); }
   }
 
   // ── polling ──────────────────────────────────────────────────────────────
+  // Each poller skips its tick if the previous request has not come back yet.
+  // Without this, a slow Master turns every interval into one more request on
+  // top of the pile, which is how a transient stall becomes a permanent timeout.
+  const inFlight = { jobs: false, workers: false, metrics: false };
+
+  function guarded(name, fn) {
+    return async function () {
+      if (inFlight[name]) return;
+      inFlight[name] = true;
+      try { await fn(); } finally { inFlight[name] = false; }
+    };
+  }
+
+  const pollJobs = guarded("jobs", loadJobs);
+  const pollWorkers = guarded("workers", loadWorkers);
+  const pollMetrics = guarded("metrics", loadMetrics);
+
   function startAll() {
     if (timers.started) return;
     timers.started = true;
-    loadJobs(); loadWorkers(); loadMetrics();
-    timers.jobs = setInterval(loadJobs, REQ.jobs);
-    timers.workers = setInterval(loadWorkers, REQ.workers);
-    timers.metrics = setInterval(loadMetrics, REQ.metrics);
+    pollJobs(); pollWorkers(); pollMetrics();
+    timers.jobs = setInterval(pollJobs, REQ.jobs);
+    timers.workers = setInterval(pollWorkers, REQ.workers);
+    timers.metrics = setInterval(pollMetrics, REQ.metrics);
   }
 
   function stopAll() {

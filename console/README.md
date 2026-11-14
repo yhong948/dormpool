@@ -19,8 +19,8 @@ console/
 | 分区 | 数据来源 | 轮询 | 内容 |
 |------|---------|------|------|
 | 提交任务 | `POST /jobs` | — | 任务类型下拉 + zip 文件选择，返回 job_id 与任务数 |
-| 任务列表 | `GET /jobs` | 3s | Job ID、类型、进度条（done/total）、状态徽章、完成后下载链接 |
-| 节点 | `GET /workers` | 3s | ID、主机、连接/贡献/执行三态、槽位、CPU%、GPU%、真实能力 |
+| 任务列表 | `GET /jobs` | 1.5s | Job ID、类型、进度条（done/total）、状态徽章、完成后下载链接 |
+| 节点 | `GET /workers` | 1s | ID、主机、连接/贡献/执行三态、槽位、CPU%、GPU%、真实能力 |
 | 池化指标 | `GET /metrics/summary` | 5s | η_pool、加速比 S、P_pool、成功任务数、各设备吞吐条形图 |
 | 节点事件 | 同上 `node_events` | 5s | 最近 20 条 join/pause/resume/timeout，按时间倒序 |
 

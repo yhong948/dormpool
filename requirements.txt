@@ -3,3 +3,12 @@ uvicorn[standard]>=0.29
 python-multipart>=0.0.9
 requests>=2.31
 psutil>=5.9
+Pillow>=9.1
+pynvml>=11.5
+# Optional: GPU workload (task_type image_thumb_gpu).
+# Windows machines with only a driver need the [ctk] extra for the CUDA runtime
+# DLLs (cublas/cublasLt) — otherwise CuPy imports but fails at the first kernel:
+#     pip install "cupy-cuda12x[ctk]"
+# Linux nodes usually reuse the system CUDA runtime and need only:
+#     pip install cupy-cuda12x
+cupy-cuda12x>=14.0 ; sys_platform == "win32" or sys_platform == "linux"

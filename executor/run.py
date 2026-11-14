@@ -27,12 +27,23 @@ if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
 from executor.workload.image_thumb import run as image_thumb_run  # noqa: E402
+from executor.workload.image_thumb_gpu import (  # noqa: E402
+    GpuUnavailable,
+    run as image_thumb_gpu_run,
+)
 
 # ── Task registry ────────────────────────────────────────────────────────────
 # Map task_type string → callable(input_path: str, output_path: str) -> int
+#
+# image_thumb_gpu is a separate type on purpose: its GPU resize cannot be
+# byte-identical to Pillow's LANCZOS, so it must not replace the frozen
+# image_thumb implementation (that would break the G1 determinism gate). Both
+# emit the same manifest schema and are checked by the same authoritative
+# validator; only the pixels differ.
 
 TASK_REGISTRY = {
     "image_thumb": image_thumb_run,
+    "image_thumb_gpu": image_thumb_gpu_run,
 }
 
 

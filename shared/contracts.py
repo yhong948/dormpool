@@ -182,7 +182,7 @@ EXECUTOR_FATAL      = 2
 # ── Timing constants (seconds) ────────────────────────────────────────────────
 
 MASTER_PORT         = 8000
-HEARTBEAT_INTERVAL  = 10    # Worker sends heartbeat every N seconds
+HEARTBEAT_INTERVAL  = 0.5   # Worker sends heartbeat every N seconds
 LEASE_DURATION      = 120   # Initial task lease granted on claim
 LEASE_RENEW_BEFORE  = 20    # Worker renews when ≤ this many seconds remain
-WORKER_TIMEOUT      = 35    # Master marks OFFLINE after N seconds without heartbeat
+WORKER_TIMEOUT      = 2.0   # Master marks OFFLINE after N seconds without heartbeat

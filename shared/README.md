@@ -84,10 +84,10 @@ stdout **最后一行**必须是 JSON：`{"units_done": <int>, "detail": "..."}`
 | 常量 | 值 | 含义 | 关联影响 |
 |------|-----|------|---------|
 | `MASTER_PORT` | 8000 | Master 默认端口 | — |
-| `HEARTBEAT_INTERVAL` | 10s | 心跳周期 | 状态可见性延迟上限 |
+| `HEARTBEAT_INTERVAL` | 0.5s | 心跳周期 | 必须远小于 `WORKER_TIMEOUT`，否则正常节点会误判离线 |
 | `LEASE_DURATION` | 120s | 执行租约 | 太长则失联回收慢，太短则长任务被误判 |
 | `LEASE_RENEW_BEFORE` | 20s | 剩余多久时续租 | 需小于租约的 1/3 |
-| `WORKER_TIMEOUT` | 35s | 心跳超时判定离线 | 配合扫描间隔，最坏检测 ≤ 45s |
+| `WORKER_TIMEOUT` | 2s | 心跳超时判定离线 | 扫描间隔 `WORKER_TIMEOUT/2`，最坏检测约 3s |
 
 ## 使用方式
 
