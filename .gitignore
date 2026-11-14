@@ -8,3 +8,12 @@ _tmp/
 *.out
 *.log
 .DS_Store
+
+# Runtime state written by scripts/start_*.ps1 — never commit
+.dormpool-token
+logs/
+
+# Model weights: 191.7 MB, fetched from Torchvision, not source
+models/*.pth
+models/*.pt
+models/*.onnx
