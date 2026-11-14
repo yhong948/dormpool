@@ -94,8 +94,6 @@ class JobManager:
             for task in tasks:
                 self._task_index[task.task_id] = task
                 self._attempts[task.task_id] = []
-            if total > 0:
-                job.status = JobStatus.RUNNING
         return job
 
     # ── queries ──────────────────────────────────────────────────────────────
@@ -118,6 +116,7 @@ class JobManager:
             result = [
                 t for t in self._task_index.values()
                 if t.status in (TaskStatus.PENDING, TaskStatus.RETRY_PENDING)
+                and self._jobs[t.job_id].status in (JobStatus.QUEUED, JobStatus.RUNNING)
             ]
         result.sort(key=lambda t: t.input_ref)
         return result
@@ -151,6 +150,29 @@ class JobManager:
                 item["status"] = job.status.value
                 out.append(item)
             return out
+
+    def set_paused(self, job_id: str, paused: bool) -> dict:
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None:
+                raise KeyError(job_id)
+            if job.status in (JobStatus.COMPLETED, JobStatus.FAILED):
+                raise ValueError("completed or failed jobs cannot be paused or resumed")
+            if paused:
+                job.status = JobStatus.PAUSED
+            elif job.status == JobStatus.PAUSED:
+                has_attempts = any(self._attempts.get(t.task_id) for t in self._tasks[job_id])
+                job.status = JobStatus.RUNNING if has_attempts else JobStatus.QUEUED
+            return self.job_view(job_id)
+
+    def delete_job(self, job_id: str) -> None:
+        with self._lock:
+            if job_id not in self._jobs:
+                raise KeyError(job_id)
+            for task in self._tasks.pop(job_id, []):
+                self._task_index.pop(task.task_id, None)
+                self._attempts.pop(task.task_id, None)
+            del self._jobs[job_id]
 
     def ledger(self, job_id: str) -> dict:
         """Measurement inputs M6 needs for a finished job."""
@@ -215,6 +237,11 @@ class JobManager:
     def add_attempt(self, task_id: str, attempt: dict) -> None:
         with self._lock:
             self._attempts.setdefault(task_id, []).append(attempt)
+            task = self._task_index.get(task_id)
+            if task is not None:
+                job = self._jobs.get(task.job_id)
+                if job is not None and job.status == JobStatus.QUEUED:
+                    job.status = JobStatus.RUNNING
 
     def update_attempt(self, task_id: str, attempt_id: str, **fields) -> Optional[dict]:
         with self._lock:

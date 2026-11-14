@@ -154,6 +154,14 @@ class MasterConnector:
         if convnext.get("available") and convnext.get("device") == "cuda":
             capability.gpu_name = convnext["gpu"]
         capability.supported_task_types = supported
+        capability.measurement_config = {
+            "executor_version": capability.executor_version,
+            "task_types": list(supported),
+            "convnext": {"device": convnext.get("device"),
+                          "torch": convnext.get("torch"),
+                          "weights": os.path.basename(str(convnext.get("weights") or ""))},
+            "gpu_backend": {"cupy": gpu.get("cupy"), "name": gpu.get("name")},
+        }
         log.info("executor Python=%s supported=%s CuPy=%s ConvNeXt=%s",
                  __import__('sys').executable, supported, gpu, convnext)
         body = dataclasses.asdict(capability)

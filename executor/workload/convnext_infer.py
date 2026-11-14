@@ -29,7 +29,8 @@ image_thumb_gpu uses: verify integrity, not cross-implementation equality.
 
 Weights
 -------
-Loaded from DORMPOOL_CONVNEXT_WEIGHTS (default data/convnext_small-0c510722.pth).
+Loaded from DORMPOOL_CONVNEXT_WEIGHTS, then models/convnext_small-0c510722.pth,
+then the legacy data/convnext_small-0c510722.pth path.
 The file is the official Torchvision checkpoint, so the architecture is built
 with convnext_small(weights=None) and the state dict loaded from disk — never
 downloaded at task time, which would make an offline demo hang.
@@ -73,7 +74,12 @@ _categories: Optional[List[str]] = None
 
 
 def _weights_path() -> str:
-    raw = os.environ.get(WEIGHTS_ENV) or DEFAULT_WEIGHTS
+    raw = os.environ.get(WEIGHTS_ENV)
+    if not raw:
+        model_path = os.path.join(REPO_ROOT, 'models', 'convnext_small-0c510722.pth')
+        if os.path.isfile(model_path):
+            return model_path
+        raw = DEFAULT_WEIGHTS
     return raw if os.path.isabs(raw) else os.path.join(REPO_ROOT, raw)
 
 

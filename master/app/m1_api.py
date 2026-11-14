@@ -218,6 +218,35 @@ def job_status(job_id: str):
     return view
 
 
+def _set_job_paused(job_id: str, paused: bool):
+    try:
+        return SCHED.set_job_paused(job_id, paused)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="job not found")
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+
+@app.post("/jobs/{job_id}/pause")
+def pause_job(job_id: str):
+    return _set_job_paused(job_id, True)
+
+
+@app.post("/jobs/{job_id}/resume")
+def resume_job(job_id: str):
+    return _set_job_paused(job_id, False)
+
+
+@app.delete("/jobs/{job_id}")
+def delete_job(job_id: str):
+    try:
+        SCHED.delete_job(job_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="job not found")
+    DATA.delete_job(job_id)
+    return {"deleted": True, "job_id": job_id}
+
+
 @app.get("/jobs/{job_id}/result")
 def job_result(job_id: str):
     job = JOBS.get_job(job_id)
@@ -313,13 +342,19 @@ def fetch_data(ref: str):
 
 @app.post("/data/upload/{job_id}/{task_id}")
 async def upload_output(job_id: str, task_id: str, file: UploadFile = File(...)):
+    task = JOBS.get_task(task_id)
+    if task is None or task.job_id != job_id:
+        raise HTTPException(status_code=404, detail="job or task not found")
     payload = await file.read()
     if not payload:
         raise HTTPException(status_code=400, detail="empty upload")
     if not payload.startswith(b"PK"):
         raise HTTPException(status_code=400, detail="result must be a zip archive")
     # Blocking write — keep it off the event loop (see submit_job for why).
-    ref = await run_in_threadpool(DATA.save_task_output, job_id, task_id, payload)
+    try:
+        ref = await run_in_threadpool(DATA.save_task_output, job_id, task_id, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
     return {"output_ref": ref}
 
 

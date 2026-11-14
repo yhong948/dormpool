@@ -24,6 +24,7 @@ import time, uuid
 class JobStatus(str, Enum):
     QUEUED    = "queued"
     RUNNING   = "running"
+    PAUSED    = "paused"
     COMPLETED = "completed"
     FAILED    = "failed"
 

@@ -1,10 +1,13 @@
 # ConvNeXt GPU 全链路
 
-本机使用 `.venv-gpu`（Python 3.14、PyTorch CUDA 13.2、torchvision 和 CuPy）。
-GPU 依赖清单为 `requirements-gpu.txt`；普通 Master 使用 `requirements.txt` 即可，
+本机已验证 PATH 中的 Python 3.12、PyTorch 2.6.0+cu124、torchvision 0.21.0+cu124
+和 CuPy 14.2.0，无需新建 `.venv-gpu`。`requirements-gpu.txt` 记录的是
+Python 3.14 / CUDA 13.2 环境的依赖版本，不适合直接覆盖现有 Python 3.12 环境。
+普通 Master 使用 `requirements.txt` 即可，
 无需模型或 GPU。Master 和 Worker 都需要更新本次源码，才能协商可运行任务类型。
 
-权重放在每台推理 Worker 的 `data/convnext_small-0c510722.pth`。
+权重优先从每台推理 Worker 的 `models/convnext_small-0c510722.pth` 查找，
+也兼容 `data/convnext_small-0c510722.pth`。
 可用 `DORMPOOL_CONVNEXT_WEIGHTS` 覆盖路径。默认设备为 CUDA，初始化失败会记录原因，
 节点不会宣称支持 `convnext_infer`。权重不会在领取任务时从网络下载。
 
@@ -14,8 +17,11 @@ GPU 依赖清单为 `requirements-gpu.txt`；普通 Master 使用 `requirements.
 .\scripts\start_worker.ps1 -Master http://10.4.139.66:8000 -WorkerId worker-A -MaxSlots 1
 ```
 
-启动脚本优先使用 `.venv-gpu`，也可用 `-Python` 明确指定解释器。
-它会设置 CUDA 设备、权重路径和工作区 CuPy 缓存；GPU 推理默认单槽位。
+启动脚本依次查找 `.venv-gpu`、`.venv`、已激活的虚拟环境和 PATH 中的 `python.exe`，
+也可用 `-Python` 明确指定解释器路径或命令（例如 `-Python python`）。
+无需仅为满足目录名称而重建已有的可用 GPU 环境；选中的解释器必须已安装所需依赖。
+Master 脚本也支持这些环境，但优先使用 `.venv`。
+脚本会设置 CUDA 设备和工作区 CuPy 缓存，并保留 `DORMPOOL_CONVNEXT_WEIGHTS` 覆盖；GPU 推理默认单槽位。
 后台日志在 `logs/worker-worker-A.err.log`，应出现 `supported` 包含 `convnext_infer`，
 以及 `ConvNeXt loaded ... device=cuda`。Worker 和执行器使用相同解释器。
 
