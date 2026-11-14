@@ -143,8 +143,12 @@ class API:
     # Task pull loop (Worker-pull model)
     CLAIM_TASK   = "POST /workers/{worker_id}/claim"      # body: {"free_slots": int}
     FETCH_INPUT  = "GET  /data/{ref}"
+    UPLOAD_OUTPUT= "POST /data/upload/{job_id}/{task_id}" # multipart, field name "file"
     RENEW_LEASE  = "POST /attempts/{attempt_id}/renew"
     COMMIT_RESULT= "POST /attempts/{attempt_id}/commit"   # body: {"output_ref","units_done","error_msg"}
+
+    # Health
+    PING         = "GET  /ping"
 
     # User / job surface
     SUBMIT_JOB   = "POST /jobs"                           # body: multipart or {"task_type","input_ref"}
