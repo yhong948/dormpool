@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<!--
+console/index.html  —  Team Console  (Person C owns this file)
+
+Responsibility:
+  - Submit jobs (upload input file + pick task type)
+  - Poll and display job progress
+  - Show per-device worker status
+  - Download job result when complete
+
+This is a single-file UI that talks directly to the Master REST API.
+No build step required; open via http://<master>:8000/console or serve statically.
+
+TODO (Person C):
+  1. Wire MASTER_URL to the actual deployed address.
+  2. Connect submit form to POST /jobs.
+  3. Connect worker table to GET /workers.
+  4. Connect job rows to GET /jobs/{job_id} for progress polling.
+  5. Add download link pointing to GET /jobs/{job_id}/result.
+  6. Add metrics panel using GET /metrics/summary (η_pool, S, per-device bars).
+-->
+<html lang="zh">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>DormPool — Team Console</title>
+  <style>
+    :root {
+      --bg: #f7f7f8; --surface: #fff; --border: #e0e0e0;
+      --text: #1a1a1a; --muted: #6b7280;
+      --accent: #2563eb; --ok: #16a34a; --warn: #ca8a04; --err: #dc2626;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: var(--bg); color: var(--text); font: 14px/1.5 system-ui, sans-serif; padding: 24px; }
+    h1   { font-size: 1.25rem; margin-bottom: 20px; }
+    h2   { font-size: 1rem; margin: 24px 0 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+    .card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--border); font-size: 13px; }
+    th { color: var(--muted); font-weight: 500; }
+    .badge { display: inline-block; padding: 1px 7px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+    .badge-ok   { background:#dcfce7; color: var(--ok);   }
+    .badge-warn { background:#fef9c3; color: var(--warn); }
+    .badge-err  { background:#fee2e2; color: var(--err);  }
+    button { background: var(--accent); color: #fff; border: none; border-radius: 6px; padding: 7px 16px; cursor: pointer; font-size: 13px; }
+    button:hover { opacity:.85; }
+    input, select { border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; font-size: 13px; width: 100%; margin-bottom: 10px; }
+    label { font-size: 13px; color: var(--muted); display: block; margin-bottom: 3px; }
+  </style>
+</head>
+<body>
+  <h1>🖥️ DormPool — Team Console</h1>
+
+  <!-- Submit Job -->
+  <h2>Submit Job</h2>
+  <div class="card" style="max-width:420px">
+    <label>Task type</label>
+    <select id="taskType">
+      <!-- TODO (Person C): populate with actual supported task types -->
+      <option value="">— select —</option>
+    </select>
+    <label>Input file</label>
+    <input type="file" id="inputFile"/>
+    <button onclick="submitJob()">Submit</button>
+    <p id="submitMsg" style="margin-top:8px;font-size:12px;color:var(--muted)"></p>
+  </div>
+
+  <!-- Job List -->
+  <h2>Jobs</h2>
+  <div class="card">
+    <table>
+      <thead><tr><th>Job ID</th><th>Type</th><th>Progress</th><th>Status</th><th>Result</th></tr></thead>
+      <tbody id="jobTable"><tr><td colspan="5" style="color:var(--muted)">Loading…</td></tr></tbody>
+    </table>
+  </div>
+
+  <!-- Worker Status -->
+  <h2>Workers</h2>
+  <div class="card">
+    <table>
+      <thead><tr><th>Worker ID</th><th>Host</th><th>Conn</th><th>Contrib</th><th>Slots</th><th>CPU%</th><th>GPU%</th></tr></thead>
+      <tbody id="workerTable"><tr><td colspan="7" style="color:var(--muted)">Loading…</td></tr></tbody>
+    </table>
+  </div>
+
+  <!-- Metrics -->
+  <h2>Pool Metrics</h2>
+  <div class="card" id="metricsPanel" style="font-size:13px;color:var(--muted)">Loading…</div>
+
+  <script>
+    // TODO (Person C): update MASTER_URL to deployed address
+    const MASTER_URL = "";   // e.g. "http://192.168.1.100:8000"
+    const TOKEN      = localStorage.getItem("dormpool_token") || "dev-token";
+    const H          = { "Authorization": `Bearer ${TOKEN}` };
+
+    async function api(path, opts={}) {
+      const r = await fetch(MASTER_URL + path, { headers: H, ...opts });
+      if (!r.ok) throw new Error(await r.text());
+      return r.json();
+    }
+
+    async function submitJob() {
+      const type = document.getElementById("taskType").value;
+      const file = document.getElementById("inputFile").files[0];
+      const msg  = document.getElementById("submitMsg");
+      if (!type || !file) { msg.textContent = "Select task type and file."; return; }
+      const fd = new FormData();
+      fd.append("file", file);
+      try {
+        const r = await fetch(`${MASTER_URL}/jobs?task_type=${encodeURIComponent(type)}`,
+          { method:"POST", headers:{"Authorization":`Bearer ${TOKEN}`}, body:fd });
+        const d = await r.json();
+        msg.textContent = `Submitted: ${d.job_id}`;
+        loadJobs();
+      } catch(e) { msg.textContent = "Error: " + e.message; }
+    }
+
+    async function loadJobs() {
+      try {
+        const jobs = await api("/jobs");
+        const tb   = document.getElementById("jobTable");
+        if (!jobs.length) { tb.innerHTML = `<tr><td colspan="5" style="color:var(--muted)">No jobs yet.</td></tr>`; return; }
+        tb.innerHTML = jobs.map(j => `
+          <tr>
+            <td style="font-family:monospace">${j.job_id}</td>
+            <td>${j.task_type}</td>
+            <td>${j.done_tasks}/${j.total_tasks}</td>
+            <td><span class="badge ${j.status==='completed'?'badge-ok':j.status==='failed'?'badge-err':'badge-warn'}">${j.status}</span></td>
+            <td>${j.status==='completed'?`<a href="${MASTER_URL}/jobs/${j.job_id}/result">Download</a>`:'—'}</td>
+          </tr>`).join("");
+      } catch(e) { document.getElementById("jobTable").innerHTML = `<tr><td colspan="5">${e.message}</td></tr>`; }
+    }
+
+    async function loadWorkers() {
+      try {
+        const ws = await api("/workers");
+        const tb = document.getElementById("workerTable");
+        if (!ws.length) { tb.innerHTML = `<tr><td colspan="7" style="color:var(--muted)">No workers.</td></tr>`; return; }
+        tb.innerHTML = ws.map(w => `
+          <tr>
+            <td style="font-family:monospace">${w.worker_id}</td>
+            <td>${w.hostname}</td>
+            <td><span class="badge ${w.conn_state==='online'?'badge-ok':'badge-err'}">${w.conn_state}</span></td>
+            <td><span class="badge ${w.contrib==='available'?'badge-ok':w.contrib==='paused'?'badge-warn':'badge-err'}">${w.contrib}</span></td>
+            <td>${w.free_slots}</td>
+            <td>${w.cpu_pct!=null?w.cpu_pct.toFixed(1):'—'}</td>
+            <td>${w.gpu_pct!=null?w.gpu_pct.toFixed(1):'—'}</td>
+          </tr>`).join("");
+      } catch(e) { document.getElementById("workerTable").innerHTML = `<tr><td colspan="7">${e.message}</td></tr>`; }
+    }
+
+    async function loadMetrics() {
+      try {
+        const m = await api("/metrics/summary");
+        const p = document.getElementById("metricsPanel");
+        const eta = m.eta_pool_pct != null ? m.eta_pool_pct.toFixed(1)+"%" : "—";
+        const s   = m.speedup_S   != null ? m.speedup_S.toFixed(2)+"×"    : "—";
+        const devRows = Object.entries(m.per_device_throughput || {})
+          .map(([wid,tp]) => `<tr><td style="font-family:monospace">${wid}</td><td>${tp.toFixed(2)} units/s</td></tr>`).join("");
+        p.innerHTML = `
+          <strong>η_pool</strong> ${eta} &nbsp;|&nbsp; <strong>Speedup S</strong> ${s}<br/><br/>
+          <table><thead><tr><th>Worker</th><th>Throughput</th></tr></thead><tbody>${devRows||'<tr><td colspan="2">No data</td></tr>'}</tbody></table>`;
+      } catch(e) { document.getElementById("metricsPanel").textContent = e.message; }
+    }
+
+    function refresh() { loadJobs(); loadWorkers(); loadMetrics(); }
+    refresh();
+    setInterval(refresh, 5000);
+  </script>
+</body>
+</html>
