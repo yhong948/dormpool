@@ -110,6 +110,10 @@ class TaskScheduler:
                 task.assigned_worker = worker_id
 
                 record = asdict(attempt)
+                record['execution_profile'] = {**worker.capability.execution_profile,
+                                               'max_slots': worker.capability.max_slots}
+                record['device'] = {'hostname':worker.capability.hostname,
+                                    'gpu_uuid':worker.capability.execution_profile.get('device_uuid')}
                 record["status"] = attempt.status.value
                 self._attempts[attempt.attempt_id] = record
                 self._jobs.add_attempt(task.task_id, record)
@@ -135,6 +139,9 @@ class TaskScheduler:
 
     @staticmethod
     def _worker_matches(worker, task) -> bool:
+        allowed = (task.resource_req or {}).get('worker_ids')
+        if allowed and worker.capability.worker_id not in allowed:
+            return False
         supported = worker.capability.supported_task_types
         if task.task_type not in (supported if supported is not None else ["image_thumb"]):
             return False
@@ -225,27 +232,28 @@ class TaskScheduler:
                         path = _resolve_output(output_ref)
                     except Exception:
                         path = None
-                if path:
+                try:
+                    if not path:
+                        raise ValueError('result reference missing or cannot be resolved')
                     meta["input_abs_path"] = self._input_abs_path(task.input_ref)
-                    try:
-                        verified_units = int(_validate(path, meta))
-                    except Exception as exc:
-                        record["status"] = AttemptStatus.FAILED.value
-                        record["finished_at"] = now
-                        record["error_msg"] = f"validation failed: {exc}"
-                        record["units_done"] = 0
-                        self._jobs.update_attempt(
-                            task_id, attempt_id,
-                            status=AttemptStatus.FAILED.value,
-                            finished_at=now,
-                            error_msg=record["error_msg"],
-                            units_done=0,
-                        )
-                        self._jobs.mark_task_failed(task_id, record["error_msg"])
-                        return {
-                            "committed": False, "failed": True,
-                            "validation_error": str(exc)[:400],
-                        }
+                    verified_units = int(_validate(path, meta))
+                except Exception as exc:
+                    record["status"] = AttemptStatus.FAILED.value
+                    record["finished_at"] = now
+                    record["error_msg"] = f"validation failed: {exc}"
+                    record["units_done"] = 0
+                    self._jobs.update_attempt(
+                        task_id, attempt_id,
+                        status=AttemptStatus.FAILED.value,
+                        finished_at=now,
+                        error_msg=record["error_msg"],
+                        units_done=0,
+                    )
+                    self._jobs.mark_task_failed(task_id, record["error_msg"])
+                    return {
+                        "committed": False, "failed": True,
+                        "validation_error": str(exc)[:400],
+                    }
 
             record["status"] = AttemptStatus.SUCCEEDED.value
             record["finished_at"] = now

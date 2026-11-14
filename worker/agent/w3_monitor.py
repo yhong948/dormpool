@@ -69,6 +69,7 @@ _GPU_VENDOR_HINTS = (
 _nvml_lock = threading.Lock()
 _nvml_state: Optional[bool] = None      # None = not tried, True = usable, False = unusable
 _nvml_mod = None
+_nvml_error = None
 
 
 def _nvml():
@@ -77,7 +78,7 @@ def _nvml():
     Thread-safe, idempotent, and swallows every failure (missing lib, no driver,
     deprecated package shim, ...). The result is cached for the process lifetime.
     """
-    global _nvml_state, _nvml_mod
+    global _nvml_state, _nvml_mod, _nvml_error
     with _nvml_lock:
         if _nvml_state is not None:
             return _nvml_mod if _nvml_state else None
@@ -89,10 +90,12 @@ def _nvml():
             _m.nvmlInit()
             _nvml_mod = _m
             _nvml_state = True
+            _nvml_error = None
         except Exception as exc:          # ImportError, NVMLError, OSError, ...
             log.debug("pynvml unavailable: %s", exc)
             _nvml_mod = None
             _nvml_state = False
+            _nvml_error = str(exc)
         return _nvml_mod if _nvml_state else None
 
 
@@ -325,6 +328,64 @@ class ResourceMonitor:
         self._lock = threading.Lock()
         self._cap_lock = threading.Lock()
         self._cap: Optional[WorkerCapability] = None
+        self._sample_lock = threading.Lock()
+        self._sample_stop = threading.Event()
+        self._sampler = None
+        self._gpu_identity = {}
+        self._sample = {"gpu_pct": None, "cpu_pct": None, "status": "initializing",
+                        "error": "resource sampler not started", "sampled_at": None}
+
+    def start_sampling(self, uuid=None, pci_bus_id=None):
+        self._gpu_identity = {"uuid": uuid, "pci_bus_id": pci_bus_id}
+        if self._sampler is not None:
+            return
+        def sample_loop():
+            if _PSUTIL:
+                psutil.cpu_percent(interval=None)  # prime this sampling thread
+            while not self._sample_stop.is_set():
+                start = time.monotonic()
+                try:
+                    cpu = float(psutil.cpu_percent(interval=None)) if _PSUTIL else None
+                except Exception:
+                    cpu = None
+                sample = {"cpu_pct": cpu,
+                          "gpu_pct": None, "sampled_at": time.time(), "interval_s": 1.0,
+                          "source": "nvml", "scope": "whole_device", "status": "unavailable"}
+                try:
+                    nv = _nvml()
+                    if nv is None:
+                        raise RuntimeError(_nvml_error or "NVML unavailable; install nvidia-ml-py")
+                    if uuid:
+                        handle = nv.nvmlDeviceGetHandleByUUID(str(uuid))
+                    elif pci_bus_id:
+                        handle = nv.nvmlDeviceGetHandleByPciBusId(str(pci_bus_id))
+                    else:
+                        handle = nv.nvmlDeviceGetHandleByIndex(0)
+                    value = float(nv.nvmlDeviceGetUtilizationRates(handle).gpu)
+                    if not 0 <= value <= 100:
+                        raise RuntimeError("invalid NVML utilization sample")
+                    gpu_uuid = nv.nvmlDeviceGetUUID(handle)
+                    if isinstance(gpu_uuid, bytes):
+                        gpu_uuid = gpu_uuid.decode()
+                    sample.update(gpu_pct=value, gpu_uuid=gpu_uuid, status="ok", error=None)
+                    mem = nv.nvmlDeviceGetMemoryInfo(handle)
+                    sample.update(memory_used_bytes=int(mem.used), memory_total_bytes=int(mem.total))
+                except Exception as exc:
+                    sample["error"] = str(exc)
+                with self._sample_lock:
+                    self._sample = sample
+                self._sample_stop.wait(max(0.01, 1.0-(time.monotonic()-start)))
+        self._sampler = threading.Thread(target=sample_loop, name="resource-sampler", daemon=True)
+        self._sampler.start()
+
+    def resource_sample(self):
+        with self._sample_lock:
+            return dict(self._sample)
+
+    def stop_sampling(self):
+        self._sample_stop.set()
+        if self._sampler:
+            self._sampler.join(timeout=2)
 
     # ── Slot accounting (called by W5) ────────────────────────────────────────
 

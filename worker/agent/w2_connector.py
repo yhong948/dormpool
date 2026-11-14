@@ -145,6 +145,9 @@ class MasterConnector:
         supported = ready["supported_task_types"]
         gpu = ready["gpu"]
         convnext = ready["convnext"]
+        capability.execution_profile = ready.get("execution_profile", {})
+        capability.execution_profile['device_uuid'] = convnext.get('gpu_uuid')
+        monitor.start_sampling(uuid=convnext.get("gpu_uuid"), pci_bus_id=gpu.get("pci_bus_id"))
         if gpu.get("available"):
             capability.gpu_name = gpu["name"]
             capability.gpu_vram_gb = gpu["vram_gb"]
@@ -185,6 +188,8 @@ class MasterConnector:
         # materialises.
         advertised_slots = monitor.free_slots() if contrib_state == WorkerContribState.AVAILABLE else 0
 
+        resource = monitor.resource_sample()
+        resource['age_s'] = max(0,time.time()-resource['sampled_at']) if resource.get('sampled_at') else None
         heartbeat = WorkerHeartbeat(
             worker_id=self.cfg.worker_id,
             conn_state=WorkerConnState.ONLINE,
@@ -192,8 +197,9 @@ class MasterConnector:
             exec_state=WorkerExecState.BUSY if busy > 0 else WorkerExecState.IDLE,
             free_slots=advertised_slots,
             running_task_ids=executor.running_task_ids() if executor else [],
-            cpu_pct=monitor.cpu_pct(),
-            gpu_pct=monitor.gpu_pct(),
+            cpu_pct=resource.get("cpu_pct"),
+            gpu_pct=resource.get("gpu_pct"),
+            resource_sample=resource,
         )
         try:
             self._post(

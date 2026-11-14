@@ -23,12 +23,13 @@ Endpoint map (paths come from shared.contracts.API):
 from __future__ import annotations
 
 import os
+import hashlib
 import time
 import uuid
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, File, Form, HTTPException, Response, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Response, UploadFile, Request
 from fastapi.responses import FileResponse, JSONResponse
 from starlette.concurrency import run_in_threadpool
 
@@ -53,7 +54,7 @@ from master.app.m6_metrics import MetricsCollector
 REGISTRY = WorkerRegistry()
 JOBS = JobManager()
 DATA = DataManager()
-METRICS = MetricsCollector()
+METRICS = MetricsCollector(report_path=Path(os.environ.get('DORMPOOL_DATA','data'))/'measurements/benchmarks.json')
 SCHED = TaskScheduler(JOBS, REGISTRY)
 
 
@@ -100,11 +101,22 @@ def _on_job_completed(job_id: str) -> None:
         job = JOBS.get_job(job_id)
         if job is not None:
             job.output_ref = ref
+            job.finished_at = time.time()  # include verified final result assembly
+    else:
+        job = JOBS.get_job(job_id)
+        if job is not None:
+            job.status = type(job.status).FAILED
+            job.finished_at = time.time()
+        return
     METRICS.record_pool_job(
         job_id=job_id,
         created_at=ledger["created_at"],
-        finished_at=ledger["finished_at"] or time.time(),
+        finished_at=job.finished_at,
         units_total=ledger["units_total"],
+        workers=ledger['workers'], execution_profiles=ledger['execution_profiles'],
+        worker_devices=ledger['worker_devices'], failed_attempts=ledger['failed_attempts'],
+        profile_changed=ledger['profile_changed'], per_worker_units=ledger['per_worker_units'],
+        succeeded_attempts=ledger['succeeded_attempts'],
     )
 
 
@@ -125,6 +137,12 @@ SCHED.start()
 
 app = FastAPI(title="DormPool Master", version="0.1.0")
 
+
+@app.middleware('http')
+async def measurement_clock(request: Request, call_next):
+    request.state.received_at = time.time()
+    return await call_next(request)
+
 # ── Health ───────────────────────────────────────────────────────────────────
 
 @app.get("/ping")
@@ -135,7 +153,12 @@ def ping() -> dict:
 # ── Jobs ─────────────────────────────────────────────────────────────────────
 
 @app.post("/jobs")
-async def submit_job(task_type: str = Form("convnext_infer"), file: UploadFile = File(...)):
+async def submit_job(request: Request, task_type: str = Form("convnext_infer"), file: UploadFile = File(...),
+                     worker_ids: Optional[str] = Form(None)):
+    submitted_at = request.state.received_at
+    allowed = [value.strip() for value in worker_ids.split(',') if value.strip()] if worker_ids else None
+    if worker_ids is not None and not allowed:
+        raise HTTPException(status_code=400,detail='worker_ids must contain at least one Worker ID')
     try:
         payload = await file.read()
     except Exception as exc:
@@ -162,7 +185,12 @@ async def submit_job(task_type: str = Form("convnext_infer"), file: UploadFile =
     if not refs:
         raise HTTPException(status_code=400, detail="no images found in the uploaded archive")
 
-    job = JOBS.create_job(task_type, refs, input_zip_ref=input_ref, job_id=job_id)
+    input_hash = await run_in_threadpool(lambda: hashlib.sha256(payload).hexdigest())
+    validator_hash = hashlib.sha256((Path(__file__).parent/'c3_validation.py').read_bytes()).hexdigest()
+    METRICS.register_job(job_id, task_type=task_type, input_sha256=input_hash,
+                         shard_size=shard_size(), correctness_version=validator_hash)
+    job = JOBS.create_job(task_type, refs, input_zip_ref=input_ref, job_id=job_id,
+                          worker_ids=allowed, created_at=submitted_at)
 
     return {
         "job_id": job.job_id,
@@ -220,6 +248,7 @@ def register_worker(body: dict):
             max_slots=int(body.get("max_slots") or 1),
             executor_version=str(body.get("executor_version") or "1"),
             supported_task_types=body.get("supported_task_types"),
+            execution_profile=body.get("execution_profile") or {},
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=f"invalid capability: {exc}")
@@ -238,10 +267,12 @@ def heartbeat(worker_id: str, body: dict):
         running_task_ids=list(body.get("running_task_ids") or []),
         cpu_pct=body.get("cpu_pct"),
         gpu_pct=body.get("gpu_pct"),
+        resource_sample=body.get("resource_sample") or {},
     )
     result = REGISTRY.heartbeat(hb)
     if result.get("error"):
         raise HTTPException(status_code=404, detail=result["error"])
+    METRICS.record_sample(worker_id, hb.resource_sample)
     return result
 
 
@@ -312,8 +343,30 @@ def commit_result(attempt_id: str, body: dict):
 # ── Metrics ──────────────────────────────────────────────────────────────────
 
 @app.get("/metrics/summary")
-def metrics_summary():
-    return METRICS.summary()
+def metrics_summary(job_id: Optional[str] = None, benchmark_id: Optional[str] = None):
+    jobs = JOBS.list_jobs()
+    if job_id is None and jobs:
+        job_id = max(jobs,key=lambda j:j['created_at'])['job_id']
+    live = JOBS.ledger(job_id) if job_id else None
+    if job_id and not live:
+        raise HTTPException(status_code=404,detail='unknown Job')
+    return METRICS.summary(live, benchmark_id)
+
+
+@app.get('/metrics/benchmarks')
+def list_benchmarks():
+    return {'benchmarks':METRICS.benchmarks()}
+
+
+@app.post('/metrics/benchmarks')
+def create_benchmark(body: dict):
+    try:
+        return METRICS.create_benchmark(participants=body['participants'],
+            baseline_jobs=body['baseline_jobs'], pool_job=body['pool_job'],
+            warmup_jobs=body['warmup_jobs'], name=body.get('name',''),
+            observed_jobs=[JOBS.ledger(j['job_id']) for j in JOBS.list_jobs()])
+    except (ValueError, KeyError, TypeError) as exc:
+        raise HTTPException(status_code=400,detail=str(exc)) from exc
 
 
 # ── Console ──────────────────────────────────────────────────────────────────

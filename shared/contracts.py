@@ -69,6 +69,7 @@ class WorkerCapability:
     max_slots:        int             = 1    # max concurrent tasks this node accepts
     executor_version: str             = "1"
     supported_task_types: Optional[list[str]] = None
+    execution_profile: dict = field(default_factory=dict)
 
 @dataclass
 class WorkerHeartbeat:
@@ -81,6 +82,7 @@ class WorkerHeartbeat:
     cpu_pct:          Optional[float] = None
     gpu_pct:          Optional[float] = None
     ts:               float           = field(default_factory=time.time)
+    resource_sample: dict = field(default_factory=dict)
 
 @dataclass
 class Job:

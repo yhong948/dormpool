@@ -50,7 +50,7 @@
   .grid3{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:14px}
   .kpi{border:1px solid var(--border);border-radius:8px;padding:10px 12px}
   .kpi b{display:block;font-size:20px;font-weight:650;margin-top:2px}
-  .kpi span{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+  .kpi span{font-size:11px;color:var(--muted);letter-spacing:.05em}
   #banner{display:none;max-width:1180px;margin:0 auto 14px;padding:9px 13px;border-radius:8px;
           background:var(--errbg);color:var(--err);border:1px solid #f3c9c9;font-size:13px}
   .events{font-size:12px;color:var(--muted);max-height:170px;overflow:auto}
@@ -93,6 +93,7 @@
 
   <section>
     <h2>节点</h2>
+    <p class="muted">CPU/GPU 为整台设备的采样值，GPU% 是采样周期中的繁忙时间比例，不是 FLOPS 或显存占用率。悬停可查看采样来源、设备与缺失原因。</p>
     <table>
       <thead><tr><th>Worker</th><th>主机</th><th>连接</th><th>贡献</th><th>执行</th>
              <th>空闲槽位</th><th>CPU%</th><th>GPU%</th><th>能力</th></tr></thead>
@@ -101,17 +102,32 @@
   </section>
 
   <section>
-    <h2>池化指标</h2>
+    <h2>当前 Job 运行数据</h2>
+    <select id="metricsJob"><option value="">最新 Job</option></select>
+    <p class="muted" id="liveScope">等待 Job 数据</p>
     <div class="grid3">
-      <div class="kpi"><span>η_pool</span><b id="kEta">—</b></div>
+      <div class="kpi"><span>实时有效吞吐（图片/秒）</span><b id="liveRate">—</b></div>
+      <div class="kpi"><span>本 Job 已确认图片</span><b id="liveUnits">—</b></div>
+      <div class="kpi"><span>测量窗口（秒）</span><b id="liveSeconds">—</b></div>
+    </div>
+    <p class="muted">实时吞吐 = 本 Job 已验证且唯一确认的图片数 ÷ 提交以来的时间；完整 Job 包含结果汇总时间。运行数据不作为独立单机基线。</p>
+    <h2>正式评测 · Measurement &amp; Fairness</h2>
+    <select id="benchmarkSelect"><option value="">最新评测记录</option></select>
+    <p id="benchmarkStatus" class="muted">尚未建立独立单机基线和池测量，S、η 暂不可计算。</p>
+    <div class="grid3">
+      <div class="kpi"><span>η_pool · 聚合效率</span><b id="kEta">—</b></div>
       <div class="kpi"><span>加速比 S</span><b id="kS">—</b></div>
-      <div class="kpi"><span>P_pool</span><b id="kPool">—</b></div>
-      <div class="kpi"><span>成功任务</span><b id="kRecords">—</b></div>
+      <div class="kpi"><span>P_pool（已验证图片/秒）</span><b id="kPool">—</b></div>
+      <div class="kpi"><span>参与设备数</span><b id="kRecords">—</b></div>
     </div>
     <table>
-      <thead><tr><th>设备</th><th>P_i 单机吞吐 (units/s)</th><th style="width:38%">相对</th></tr></thead>
+      <thead><tr><th>设备 / 独立基线 Job</th><th>P_i（已验证图片/秒）</th><th>窗口、有效图片 / 资源平均值</th></tr></thead>
       <tbody id="metricsBody"><tr><td colspan="3" class="muted">暂无数据</td></tr></tbody>
     </table>
+    <p class="muted">P_i：各设备独立运行的稳定有效吞吐；P_pool：固定参与集合经统一入口测得的有效总吞吐。η_pool = P_pool / ΣP_i × 100%；S = P_pool / max(P_i)。它们不是 GPU FLOPS 利用率。</p>
+    <p id="poolScope" class="muted"></p>
+    <table><thead><tr><th>池测量参与设备</th><th>窗口平均 CPU / GPU</th><th>GPU 采样覆盖率</th></tr></thead><tbody id="poolResources"></tbody></table>
+    <details><summary>评测来源与计算依据</summary><pre id="benchmarkEvidence" style="white-space:pre-wrap">暂无评测记录</pre></details>
   </section>
 
   <section>
@@ -151,6 +167,18 @@
   function dash(value, digits) {
     if (value === null || value === undefined || value === "") return "—";
     return typeof value === "number" ? value.toFixed(digits === undefined ? 1 : digits) : esc(value);
+  }
+
+  function percent(value) {
+    return value === null || value === undefined ? '未采集' : Number(value).toFixed(1)+'%';
+  }
+
+  function measurementWarning(text) {
+    return text.replace('window shorter than 10s; verify steady load','窗口不足10秒，请确认稳定负载')
+      .replace('GPU sample coverage below 80%','GPU 采样覆盖率不足80%')
+      .replace('workers share a physical device; not a multi-device benchmark','多个 Worker 共用物理设备，不能作为多设备评测')
+      .replace('efficiency exceeds 100%; recheck baselines, batching, load and variance','效率超过100%，请复核基线、批处理、负载与波动')
+      .replace('retries observed; retry time retained, failed/duplicate units excluded','存在重试；耗时已保留，失败或重复工作量不计入有效吞吐');
   }
 
   function badge(kind, text) {
@@ -238,6 +266,11 @@
 
   // ── jobs ─────────────────────────────────────────────────────────────────
   function renderJobs(payload) {
+    const selectedJob = el("metricsJob").value;
+    el("metricsJob").innerHTML = '<option value="">最新 Job</option>' + (payload.jobs || []).map(function (j) {
+      return '<option value="' + esc(j.job_id) + '">' + esc(j.job_id + ' · ' + j.task_type) + '</option>';
+    }).join('');
+    el("metricsJob").value = selectedJob;
     const jobs = (payload && payload.jobs) || [];
     lastData.jobs = jobs;
     const body = el("jobsBody");
@@ -303,7 +336,10 @@
         "<td>" + exec + "</td>" +
         '<td class="mono">' + w.free_slots + "/" + w.max_slots + "</td>" +
         "<td>" + dash(w.cpu_pct) + "</td>" +
-        "<td>" + dash(w.gpu_pct) + "</td>" +
+        '<td title="' + esc(((w.resource_sample || {}).error || '') + ' · ' + ((w.resource_sample || {}).source || '') + ' · ' + ((w.resource_sample || {}).gpu_uuid || '') + ' · 样本年龄 ' + dash((w.resource_sample || {}).age_s) + ' 秒') + '">' +
+        (w.conn_state !== "online" ? "离线" : !(w.resource_sample || {}).sampled_at ? "等待采样" :
+         (w.resource_sample || {}).stale ? "采样过期" :
+         w.gpu_pct === null || w.gpu_pct === undefined ? "不可用" : dash(w.gpu_pct) + "%") + "</td>" +
         '<td class="mono">' + w.cpu_cores + "c / " + dash(w.ram_gb) + "GB / " + gpu + "</td>" +
         "</tr>";
     }).join("");
@@ -317,27 +353,51 @@
   // ── metrics ──────────────────────────────────────────────────────────────
   function renderMetrics(m) {
     lastData.metrics = m;
-    el("kEta").textContent = m.eta_pool_pct === null || m.eta_pool_pct === undefined
-      ? "—" : Number(m.eta_pool_pct).toFixed(1) + "%";
-    el("kS").textContent = m.speedup_S === null || m.speedup_S === undefined
-      ? "—" : Number(m.speedup_S).toFixed(2) + "×";
-    el("kPool").textContent = m.p_pool ? Number(m.p_pool).toFixed(2) : "—";
-    el("kRecords").textContent = m.total_records === undefined ? "—" : m.total_records;
+    const live = m.live || {};
+    const benchmark = m.benchmark;
+    el("liveRate").textContent = live.throughput === null || live.throughput === undefined ? '—' : Number(live.throughput).toFixed(2);
+    el("liveUnits").textContent = live.units_total === undefined ? '—' : live.units_total;
+    el("liveSeconds").textContent = Number(live.elapsed_s || 0).toFixed(1);
+    el("liveScope").textContent = (live.job_id || '暂无 Job') + ' · ' + (live.task_type || '') + ' · ' +
+      (live.status || '') + ' · 更新于 ' + new Date(m.generated_at*1000).toLocaleTimeString();
+    const selection = el("benchmarkSelect").value;
+    el("benchmarkSelect").innerHTML = '<option value="">最新评测记录</option>' + (m.benchmark_choices || []).map(function (b) {
+      return '<option value="' + esc(b.benchmark_id) + '">' + esc(b.name || b.benchmark_id) + '</option>';
+    }).join('');
+    el("benchmarkSelect").value = selection;
+    el("kEta").textContent = benchmark ? Number(benchmark.eta_pool_pct).toFixed(1)+'%' : '—';
+    el("kS").textContent = benchmark ? Number(benchmark.speedup_S).toFixed(2)+'×' : '—';
+    el("kPool").textContent = benchmark ? Number(benchmark.p_pool).toFixed(2) : '—';
+    el("kRecords").textContent = benchmark ? benchmark.participants.length : '—';
+    el("benchmarkStatus").textContent = !benchmark ? '尚未建立独立单机基线和池测量，S、η 暂不可计算。请运行评测流程。' :
+      (benchmark.status === 'ready' ? '可比测量' : '待复核，不能直接作为正式结果') + ' · ' +
+      (benchmark.warnings || []).map(measurementWarning).join('；');
+    el("benchmarkEvidence").textContent = benchmark ? JSON.stringify(benchmark,null,2) : '暂无独立基线。计算规则和评测命令见 docs/GPU采样与评测指标门禁.md。';
+    const poolRun = benchmark ? benchmark.measurements[benchmark.pool_job] : null;
+    el("poolScope").textContent = poolRun ? '池测量 ' + poolRun.job_id + ' · ' + Number(poolRun.wall_s).toFixed(2) + ' 秒 · ' + poolRun.units_total +
+      ' 张 · ' + new Date(poolRun.created_at*1000).toLocaleString() + ' → ' + new Date(poolRun.finished_at*1000).toLocaleString() : '';
+    el("poolResources").innerHTML = poolRun ? benchmark.participants.map(function (wid) {
+      const r = (poolRun.resources || {})[wid] || {};
+      return '<tr><td>'+esc(wid)+'</td><td>CPU '+percent(r.avg_cpu_pct)+'，GPU '+percent(r.avg_gpu_pct)+
+        '</td><td>'+Number((r.gpu_pct_coverage || 0)*100).toFixed(0)+'%</td></tr>';
+    }).join('') : '<tr><td colspan="3" class="muted">无池测量记录</td></tr>';
 
-    const perDevice = m.per_device_throughput || {};
+    const perDevice = benchmark ? benchmark.per_device_throughput : {};
     const keys = Object.keys(perDevice).sort();
     const body = el("metricsBody");
     if (!keys.length) {
-      body.innerHTML = '<tr><td colspan="3" class="muted">暂无数据</td></tr>';
+      body.innerHTML = '<tr><td colspan="3" class="muted">尚无独立单机基线；运行中设备贡献速率不等于 P_i。</td></tr>';
     } else {
       const peak = Math.max.apply(null, keys.map(function (k) { return perDevice[k]; })) || 1;
       body.innerHTML = keys.map(function (k) {
         const value = perDevice[k];
-        const width = Math.max(2, Math.round((value / peak) * 100));
+        const run = benchmark.measurements[benchmark.baseline_jobs[k]];
+        const resource = (run.resources || {})[k] || {};
         return "<tr>" +
-          '<td class="mono">' + esc(k) + "</td>" +
+          '<td class="mono">' + esc(k) + '<br>' + esc(run.job_id) + "</td>" +
           '<td class="mono">' + Number(value).toFixed(3) + "</td>" +
-          '<td><div class="meter"><i style="width:' + width + '%"></i></div></td>' +
+          '<td>' + Number(run.wall_s).toFixed(2) + ' 秒 / ' + run.units_total + ' 张；CPU ' + percent(resource.avg_cpu_pct) +
+          '，GPU ' + percent(resource.avg_gpu_pct) + '；GPU 覆盖 ' + Number((resource.gpu_pct_coverage || 0)*100).toFixed(0) + '%</td>' +
           "</tr>";
       }).join("");
     }
@@ -356,7 +416,10 @@
   }
 
   async function loadMetrics() {
-    try { renderMetrics(await call("/metrics/summary")); reportOk(); }
+    const query = new URLSearchParams();
+    if (el("metricsJob").value) query.set('job_id',el("metricsJob").value);
+    if (el("benchmarkSelect").value) query.set('benchmark_id',el("benchmarkSelect").value);
+    try { renderMetrics(await call("/metrics/summary?"+query.toString())); reportOk(); }
     catch (error) { reportFail(error); }
   }
 
@@ -377,6 +440,8 @@
   const pollJobs = guarded("jobs", loadJobs);
   const pollWorkers = guarded("workers", loadWorkers);
   const pollMetrics = guarded("metrics", loadMetrics);
+  el("metricsJob").addEventListener('change',pollMetrics);
+  el("benchmarkSelect").addEventListener('change',pollMetrics);
 
   function startAll() {
     if (timers.started) return;

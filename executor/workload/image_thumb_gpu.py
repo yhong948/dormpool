@@ -103,6 +103,7 @@ def gpu_summary() -> dict:
         if isinstance(name, bytes):
             name = name.decode("utf-8", "replace")
         return {"available": True, "name": str(name),
+                "pci_bus_id": cp.cuda.Device(0).pci_bus_id,
                 "cupy": cp.__version__,
                 "vram_gb": round(int(props["totalGlobalMem"]) / 1024 ** 3, 2)}
     except Exception as exc:

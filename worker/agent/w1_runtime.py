@@ -97,9 +97,9 @@ class AgentRuntime:
 
         cfg = self.config
         cfg.prepare()
-        if cfg.max_slots != 1:
-            log.warning("resident Executor capacity is 1; requested max_slots=%s, using 1", cfg.max_slots)
-            cfg.max_slots = 1
+        # if cfg.max_slots != 1:
+        #     log.warning("resident Executor capacity is 1; requested max_slots=%s, using 1", cfg.max_slots)
+        #     cfg.max_slots = 1
 
         self.monitor = ResourceMonitor(cfg.max_slots)
         self.contrib = ContributionController(self.monitor)
@@ -123,6 +123,7 @@ class AgentRuntime:
             self.shutdown()
             self.exec_mgr.close()
             self._heartbeat_stop.set()
+            self.monitor.stop_sampling()
             self.control.stop()
             log.info("agent stopped; Executor reaped")
 

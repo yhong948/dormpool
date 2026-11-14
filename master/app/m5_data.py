@@ -171,8 +171,9 @@ class DataManager:
     def aggregate_job_output(self, job_id: str, task_ids: List[str]) -> Optional[str]:
         """Merge every succeeded task's manifest and thumbs into result.zip.
 
-        Deduplicates on input_name so a retried task never contributes twice, and
-        raises nothing: a broken task archive is skipped and the rest still merge.
+        Deduplicates on input_name so a retried task never contributes twice.
+        Missing/broken task archives fail assembly; never deliver partial output
+        while accounting for all tasks as a complete measurement.
         """
         with self._lock:
             out_folder = os.path.join(_data_root(), "outputs", job_id)
@@ -187,7 +188,7 @@ class DataManager:
             for task_id in task_ids:
                 task_zip = os.path.join(out_folder, f"{task_id}.zip")
                 if not os.path.isfile(task_zip):
-                    continue
+                    return None
                 try:
                     with zipfile.ZipFile(task_zip, "r") as zin:
                         current_manifest = ("predictions.json" if "predictions.json" in zin.namelist()
@@ -205,7 +206,7 @@ class DataManager:
                             field = "logits_name" if current_manifest == "predictions.json" else "output_name"
                             out_name = entry.get(field)
                             if not out_name or out_name not in zin.namelist():
-                                continue
+                                return None
                             # Shards can contain equal basenames from different folders.
                             if out_name in blobs:
                                 out_name = f"{out_name.rsplit('/', 1)[0]}/{task_id}-{out_name.rsplit('/', 1)[-1]}"
@@ -216,7 +217,7 @@ class DataManager:
                             blobs[out_name] = zin.read(original_name)
                             seen_thumb_names.add(out_name)
                 except (zipfile.BadZipFile, OSError, ValueError, json.JSONDecodeError):
-                    continue
+                    return None
 
             if not merged:
                 return None

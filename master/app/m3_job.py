@@ -62,7 +62,7 @@ class JobManager:
     # ── creation ─────────────────────────────────────────────────────────────
 
     def create_job(self, task_type: str, input_refs: List[str],
-                   input_zip_ref: str = "", job_id: Optional[str] = None) -> Job:
+                   input_zip_ref: str = "", job_id: Optional[str] = None, worker_ids=None, created_at=None) -> Job:
         """Create a Job whose Tasks are one per shard reference.
 
         input_refs is produced by M5 when it splits the uploaded archive.
@@ -75,6 +75,7 @@ class JobManager:
             task_type=task_type,
             input_ref=input_zip_ref or (input_refs[0] if input_refs else ""),
             status=JobStatus.QUEUED,
+            created_at=time.time() if created_at is None else created_at,
             total_tasks=total,
         )
         tasks = [
@@ -82,7 +83,8 @@ class JobManager:
                 job_id=job.job_id,
                 task_type=task_type,
                 input_ref=ref,
-                resource_req={"gpu": task_type in ("image_thumb_gpu", "convnext_infer")},
+                resource_req={"gpu": task_type in ("image_thumb_gpu", "convnext_infer"),
+                              "worker_ids": worker_ids},
             )
             for ref in input_refs
         ]
@@ -160,7 +162,21 @@ class JobManager:
             per_worker_units: Dict[str, float] = {}
             per_worker_busy: Dict[str, float] = {}
             succeeded = 0
+            workers, profiles, devices = set(), {}, {}
+            failed_attempts = 0
+            profile_changed = False
             for task in self._tasks.get(job_id, []):
+                for attempt in self._attempts.get(task.task_id, []):
+                    wid = attempt.get('worker_id')
+                    if wid:
+                        workers.add(wid)
+                        profile = attempt.get('execution_profile',{})
+                        if wid in profiles and profiles[wid] != profile:
+                            profile_changed = True
+                        profiles[wid] = profile
+                        devices[wid] = attempt.get('device',{})
+                    if attempt.get('status') in ('failed','expired'):
+                        failed_attempts += 1
                 for attempt in self._attempts.get(task.task_id, []):
                     if attempt.get("status") != AttemptStatus.SUCCEEDED.value:
                         continue
@@ -173,6 +189,7 @@ class JobManager:
                     busy = max(0.0, float(finished) - float(started))
                     per_worker_busy[worker] = per_worker_busy.get(worker, 0.0) + busy
                     succeeded += 1
+                    break  # valid work is counted per logical Task, never per retry
             return {
                 "job_id": job_id,
                 "status": job.status.value,
@@ -182,6 +199,8 @@ class JobManager:
                 "succeeded_attempts": succeeded,
                 "per_worker_units": per_worker_units,
                 "per_worker_busy": per_worker_busy,
+                "workers": sorted(workers), "execution_profiles": profiles, "worker_devices": devices,
+                "failed_attempts": failed_attempts, "profile_changed": profile_changed,
             }
 
     def succeeded_task_ids(self, job_id: str) -> List[str]:

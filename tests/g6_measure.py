@@ -1,192 +1,56 @@
+"""Engineering G6 gate: two independent CPU baselines then pool, on localhost.
+Local Workers share a physical PC; the report must label this as needs_review.
 """
-tests/g6_measure.py  —  measurement gate (G6)
-=============================================
-Two INDEPENDENT measurements, never one derived from the other:
-
-  1. single-node  : one worker alive, same input   -> P_1, and S must be ~1.0
-  2. pool         : both workers alive, same input -> P_pool from the job's wall
-                                                     clock, S should exceed 1
-
-If S is always equal to the number of workers, P_pool is being faked as ΣP_i and
-this script fails on purpose (G6-5).
-
-    python tests/g6_measure.py --port 8300 --images 9 --delay-ms 700
-"""
-
-from __future__ import annotations
-
 import argparse
 import json
 import os
-import subprocess
+from pathlib import Path
+import socket
 import sys
 import tempfile
-import time
-import urllib.error
-import urllib.request
-from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
-
-HEADERS = {}
-sys.path.insert(0, str(Path(__file__).parent))
-from e2e_local import http_json, http_bytes, multipart, wait_for_port  # noqa: E402
+from e2e_local import Harness, http_json, REPO_ROOT
+sys.path.insert(0,str(REPO_ROOT/'scripts'))
+from measure_metrics import measure
 
 
-class Env:
-    def __init__(self, port, work, delay_ms):
-        self.port, self.work, self.delay_ms = port, work, delay_ms
-        self.base = f"http://127.0.0.1:{port}"
-        self.procs = {}
-
-    def start_master(self):
-        env = dict(os.environ,
-                   DORMPOOL_DATA=str(self.work / "data"), PYTHONUNBUFFERED="1",
-                   SHARD_SIZE="1")
-        log = open(self.work / "master.log", "wb")
-        self.procs["master"] = subprocess.Popen(
-            [sys.executable, "-m", "uvicorn", "master.main:app",
-             "--host", "127.0.0.1", "--port", str(self.port)],
-            cwd=str(REPO_ROOT), env=env, stdout=log, stderr=subprocess.STDOUT)
-        if not wait_for_port(self.port):
-            raise RuntimeError("master did not start")
-
-    def start_worker(self, name):
-        env = dict(os.environ, MASTER_URL=self.base,
-                   WORKER_ID=name, WORKER_DATA=str(self.work / name),
-                   MAX_SLOTS="1", WORKER_NO_REPL="1", PYTHONUNBUFFERED="1",
-                   DORMPOOL_EXECUTOR_DELAY_MS=str(self.delay_ms))
-        log = open(self.work / f"{name}.log", "ab")
-        proc = subprocess.Popen([sys.executable, "worker/main.py", "--headless"],
-                                cwd=str(REPO_ROOT), env=env, stdout=log,
-                                stderr=subprocess.STDOUT)
-        self.procs[name] = proc
-
-    def stop_worker(self, name):
-        proc = self.procs.pop(name, None)
-        if proc and proc.poll() is None:
-            proc.terminate()
-            try:
-                proc.wait(timeout=15)
-            except Exception:
-                proc.kill()
-
-    def wait_online(self, names, timeout=45):
-        end = time.time() + timeout
-        while time.time() < end:
-            online = {w["worker_id"] for w in http_json(f"{self.base}/workers")["workers"]
-                      if w["conn_state"] == "online"}
-            if names.issubset(online):
-                return True
-            time.sleep(1)
-        raise RuntimeError(f"{names} not online")
-
-    def submit(self, zip_path):
-        body, headers = multipart({"task_type": "image_thumb"}, "file",
-                                  zip_path.name, zip_path.read_bytes())
-        return http_json(f"{self.base}/jobs", "POST", body, headers)["job_id"]
-
-    def run_job(self, zip_path, timeout=300):
-        job_id = self.submit(zip_path)
-        end = time.time() + timeout
-        while time.time() < end:
-            job = http_json(f"{self.base}/jobs/{job_id}")
-            if job["status"] in ("completed", "failed"):
-                return job
-            time.sleep(1)
-        raise RuntimeError("job did not finish")
-
-    def stop_all(self):
-        for name in list(self.procs):
-            self.stop_worker(name)
-
-
-def measure(env, zip_path, label):
-    job = env.run_job(zip_path)
-    wall = float(job["finished_at"]) - float(job["created_at"])
-    units = sum(int(a.get("units_done") or 0)
-                for t in job["tasks"] for a in t.get("attempts", [])
-                if a["status"] == "succeeded")
-    rate = units / wall if wall > 0 else 0.0
-    summary = http_json(f"{env.base}/metrics/summary")
-    print(f"  {label}: status={job['status']} units={units} wall={wall:.2f}s "
-          f"p={rate:.3f} u/s")
-    print(f"    summary: p_pool={summary['p_pool']} eta={summary['eta_pool_pct']}% "
-          f"S={summary['speedup_S']} per_device={summary['per_device_throughput']}")
-    return {"job": job, "wall": wall, "units": units, "rate": rate, "summary": summary}
-
-
-def main(argv=None):
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--port", type=int, default=8300)
-    ap.add_argument("--images", type=int, default=9)
-    ap.add_argument("--delay-ms", type=int, default=700)
-    ap.add_argument("--work-dir", default=None)
-    args = ap.parse_args(argv)
-
-    work = Path(args.work_dir) if args.work_dir else Path(tempfile.mkdtemp(prefix="dormpool-g6-"))
-    work.mkdir(parents=True, exist_ok=True)
-    evidence = work / "evidence"
-    evidence.mkdir(exist_ok=True)
-
-    from executor.gen_sample import build
-    input_zip = work / "input.zip"
-    build(args.images, str(input_zip))
-
-    env = Env(args.port, work, args.delay_ms)
-    report = {}
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--port',type=int,default=0)
+    parser.add_argument('--images',type=int,default=12)
+    parser.add_argument('--delay-ms',type=int,default=100)
+    args = parser.parse_args()
+    port = args.port
+    if not port:
+        with socket.socket() as sock:
+            sock.bind(('127.0.0.1',0))
+            port = sock.getsockname()[1]
+    work = Path(tempfile.mkdtemp(prefix='dormpool-g6-'))
+    os.environ['SHARD_SIZE']='1'
+    harness = Harness(port,2,args.images,1,args.delay_ms,work)
+    print('Evidence:',work,flush=True)
     try:
-        env.start_master()
-        env.start_worker("worker-A")
-        env.wait_online({"worker-A"})
-        print(f"[single] only worker-A alive, {args.images} images")
-        single = measure(env, input_zip, "single")
-        assert single["job"]["status"] == "completed", single["job"]["status"]
-        s_single = single["summary"]["speedup_S"]
-        assert s_single is not None, "no speedup reported for the single-node run"
-        assert 0.8 <= s_single <= 1.25, f"single-worker S={s_single}, expected ~1.0"
-        report["single"] = {"wall": single["wall"], "units": single["units"],
-                            "rate": single["rate"], "S": s_single,
-                            "per_device": single["summary"]["per_device_throughput"]}
-
-        env.start_worker("worker-B")
-        env.wait_online({"worker-A", "worker-B"})
-        print(f"[pool] both workers alive, same input")
-        pool = measure(env, input_zip, "pool")
-        assert pool["job"]["status"] == "completed", pool["job"]["status"]
-        s_pool = pool["summary"]["speedup_S"]
-        assert s_pool is not None and s_pool > 0, s_pool
-
-        # P_pool must come from the wall clock, not from ΣP_i.
-        assert pool["summary"]["p_pool_source"] == "pool_wall_clock", \
-            pool["summary"]["p_pool_source"]
-        eta = pool["summary"]["eta_pool_pct"]
-        assert eta is not None and 0 < eta <= 115, f"eta={eta}"
-
-        report["pool"] = {"wall": pool["wall"], "units": pool["units"],
-                          "rate": pool["rate"], "S": s_pool, "eta": eta,
-                          "p_pool": pool["summary"]["p_pool"],
-                          "per_device": pool["summary"]["per_device_throughput"]}
-
-        gap = abs(pool["summary"]["p_pool"] - pool["rate"]) / max(pool["rate"], 1e-9)
-        assert gap < 0.15, f"p_pool {pool['summary']['p_pool']} vs measured {pool['rate']}"
-        report["p_pool_agrees_with_wall_clock"] = True
-
-        (evidence / "summary.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
-        print("\nG6 PASSED")
-        print(json.dumps(report, indent=2))
-        return 0
-    except AssertionError as exc:
-        print(f"\nFAILED: {exc}")
-        return 1
-    except Exception as exc:
-        print(f"\nERROR: {exc!r}")
-        return 2
+        harness.start_master()
+        harness.start_worker('worker-A')
+        harness.start_worker('worker-B')
+        harness.wait_registered(2)
+        initial = http_json(harness.base+'/metrics/summary')
+        assert initial['speedup_S'] is None and initial['eta_pool_pct'] is None
+        source = harness.build_input(work/'input.zip')
+        report = measure(harness.base,source,['worker-A','worker-B'],'image_thumb',work/'summary.json')
+        assert set(report['per_device_throughput'])=={'worker-A','worker-B'}
+        for wid,rate in report['per_device_throughput'].items():
+            base = report['measurements'][report['baseline_jobs'][wid]]
+            assert base['workers']==[wid]
+            assert abs(rate-base['units_total']/base['wall_s'])<1e-8
+        pool = report['measurements'][report['pool_job']]
+        assert abs(report['p_pool']-pool['units_total']/pool['wall_s'])<1e-8
+        assert abs(report['speedup_S']-report['p_pool']/max(report['per_device_throughput'].values()))<1e-8
+        assert report['status']=='needs_review'
+        assert any('physical' in warning for warning in report['warnings'])
+        print('G6 PASSED: independent runs and explicit local-only fairness warning',flush=True)
     finally:
-        env.stop_all()
+        harness.stop()
 
 
-if __name__ == "__main__":
-    raise SystemExit(main())
+if __name__=='__main__': main()

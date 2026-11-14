@@ -54,7 +54,7 @@ class WorkerEntry:
 
     __slots__ = (
         "capability", "conn_state", "contrib", "exec_state", "free_slots",
-        "running_task_ids", "cpu_pct", "gpu_pct", "last_seen", "registered_at",
+        "running_task_ids", "cpu_pct", "gpu_pct", "last_seen", "registered_at", "resource_sample",
     )
 
     def __init__(self, cap: WorkerCapability):
@@ -68,12 +68,17 @@ class WorkerEntry:
         self.gpu_pct: Optional[float] = None
         self.last_seen = time.time()
         self.registered_at = time.time()
+        self.resource_sample = {}
 
     # ── serialisation ────────────────────────────────────────────────────────
 
     def to_dict(self) -> dict:
         """JSON-safe view. Field names are frozen by the acceptance gates."""
         cap = self.capability
+        sample = dict(self.resource_sample)
+        if sample.get('age_s') is not None:
+            sample['age_s'] += max(0,time.time()-self.last_seen)
+            sample['stale'] = sample['age_s'] > 3
         return {
             "worker_id": cap.worker_id,
             "hostname": cap.hostname,
@@ -90,8 +95,10 @@ class WorkerEntry:
             "gpu_vram_gb": cap.gpu_vram_gb,
             "executor_version": cap.executor_version,
             "supported_task_types": cap.supported_task_types,
+            "execution_profile": cap.execution_profile,
             "cpu_pct": self.cpu_pct,
             "gpu_pct": self.gpu_pct,
+            "resource_sample": sample,
             "last_seen": self.last_seen,
             "registered_at": self.registered_at,
         }
@@ -185,6 +192,7 @@ class WorkerRegistry:
             entry.running_task_ids = list(hb.running_task_ids or [])
             entry.cpu_pct = hb.cpu_pct
             entry.gpu_pct = hb.gpu_pct
+            entry.resource_sample = dict(hb.resource_sample)
             entry.last_seen = time.time()
 
         if previous_contrib != new_contrib and _on_node_event:

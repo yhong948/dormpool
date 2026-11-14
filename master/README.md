@@ -88,7 +88,7 @@ POST /attempts/{id}/commit {output_ref, units_done, error_msg}
 | **节点失联回收** | `m2.scan_expired` → `m4.reclaim_worker` | 不消耗重试次数就把 Task 放回队列，避免等满 120s 租约 |
 | **只统计成功** | `m1._on_success` | MetricRecord 只在成功分支写入，每个 attempt 只写一次 |
 | **P_pool 独立测量** | `m6.record_pool_job` | 用 Job 的 `created_at → finished_at` 墙钟，**绝不**用 ΣP_i |
-| **P_i 口径** | `m6.per_device_throughput` | 分子为该设备成功单位数，分母为其**占用跨度**（首 attempt 开始到最后结束），下限为累加执行时间 |
+| **P_i 口径** | `m6.create_benchmark` | 独立单设备基线 Job 的已验证图片数 / 完整服务窗口；不使用运行中贡献速率替代 |
 
 ## 接口清单
 

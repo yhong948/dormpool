@@ -1,6 +1,9 @@
 """Private local JSON Lines service. Only predefined workload handlers run here."""
 from contextlib import redirect_stdout
 import json
+import hashlib
+import importlib.metadata
+from pathlib import Path
 import os
 import sys
 import time
@@ -31,11 +34,26 @@ def initialize():
             model(torch.zeros(1, 3, 224, 224, device=device))
         torch.cuda.synchronize(device)
         convnext = {"available": True, "device": device.type, "weights": _weights_path(),
+                    "gpu_uuid": str(torch.cuda.get_device_properties(device).uuid),
                     "gpu": torch.cuda.get_device_name(device), "torch": torch.__version__}
+        with open(_weights_path(), "rb") as weights:
+            convnext["weights_sha256"] = hashlib.file_digest(weights, "sha256").hexdigest()
         supported.append("convnext_infer")
     except Exception as exc:
         convnext = {"available": False, "reason": str(exc)}
-    return {"type": "ready", "protocol": PROTOCOL_VERSION, "pid": os.getpid(),
+    implementation = hashlib.sha256()
+    for path in sorted((Path(__file__).parent / "workload").glob("*.py")):
+        implementation.update(path.name.encode())
+        implementation.update(path.read_bytes())
+    profile = {"implementation_sha256": implementation.hexdigest(), "torch_threads": os.environ.get("DORMPOOL_TORCH_THREADS", "2"),
+               "weights_sha256": convnext.get("weights_sha256"), "torch": convnext.get("torch")}
+    profile['libraries'] = {}
+    for package in ('Pillow','numpy','torch','torchvision','cupy-cuda13x'):
+        try:
+            profile['libraries'][package] = importlib.metadata.version(package)
+        except importlib.metadata.PackageNotFoundError:
+            pass
+    return {"type": "ready", "protocol": PROTOCOL_VERSION, "pid": os.getpid(), "execution_profile": profile,
             "supported_task_types": supported, "gpu": gpu, "convnext": convnext,
             "initialization_s": round(time.perf_counter() - start, 6)}
 

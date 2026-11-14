@@ -41,7 +41,7 @@
 param(
     [string]$Master,
     [string]$WorkerId,
-    [int]$MaxSlots = 1,
+    [int]$MaxSlots = 100,
     [string]$Python,
     [int]$DelayMs = 0,
     [int]$ControlPort = 0,
