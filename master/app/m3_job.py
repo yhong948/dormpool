@@ -82,7 +82,7 @@ class JobManager:
                 job_id=job.job_id,
                 task_type=task_type,
                 input_ref=ref,
-                resource_req={"gpu": False},
+                resource_req={"gpu": task_type in ("image_thumb_gpu", "convnext_infer")},
             )
             for ref in input_refs
         ]

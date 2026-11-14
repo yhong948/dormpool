@@ -165,6 +165,8 @@ class ExecutionManager:
             stop_renew.set()
 
         exit_code = proc.returncode
+        if exit_code == EXECUTOR_SUCCESS and stderr:
+            log.info("executor %s: %s", task_id, stderr.decode("utf-8", "replace").strip())
         units_done, detail, error_msg = self._parse_result(exit_code, stdout, stderr, task_id)
 
         # 5. upload + commit

@@ -89,6 +89,7 @@ class WorkerEntry:
             "gpu_name": cap.gpu_name,          # None -> JSON null, never "None"
             "gpu_vram_gb": cap.gpu_vram_gb,
             "executor_version": cap.executor_version,
+            "supported_task_types": cap.supported_task_types,
             "cpu_pct": self.cpu_pct,
             "gpu_pct": self.gpu_pct,
             "last_seen": self.last_seen,

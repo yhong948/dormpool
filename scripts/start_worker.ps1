@@ -47,6 +47,7 @@ param(
     [string]$Master,
     [string]$WorkerId,
     [int]$MaxSlots = 1,
+    [string]$Python,
     [string]$Token,
     [int]$DelayMs = 0,
     [int]$ControlPort = 0,
@@ -57,6 +58,15 @@ $ErrorActionPreference = "Stop"
 
 $Root = Split-Path -Parent $PSScriptRoot
 Set-Location $Root
+if (-not $Python) {
+    $Python = Join-Path $Root '.venv-gpu\Scripts\python.exe'
+    if (-not (Test-Path $Python)) { $Python = Join-Path $Root '.venv\Scripts\python.exe' }
+}
+if (-not (Test-Path $Python)) { throw "Python environment missing: $Python" }
+$env:CUPY_CACHE_DIR = Join-Path $Root '._tmp\cupy-cache'
+$env:DORMPOOL_CONVNEXT_WEIGHTS = if ($env:DORMPOOL_CONVNEXT_WEIGHTS) { $env:DORMPOOL_CONVNEXT_WEIGHTS } else { Join-Path $Root 'data\convnext_small-0c510722.pth' }
+$env:DORMPOOL_CONVNEXT_DEVICE = 'cuda'
+Write-Host "Python  : $Python"
 
 $LogDir = Join-Path $Root "logs"
 if (-not (Test-Path $LogDir)) { New-Item -ItemType Directory -Path $LogDir | Out-Null }
@@ -123,11 +133,11 @@ if ($DelayMs -gt 0)     { Write-Host "  Delay   : $DelayMs ms/image" -Foreground
 Write-Host ""
 
 if ($Foreground) {
-    python worker/main.py
+    & $Python worker/main.py
     exit $LASTEXITCODE
 }
 
-$proc = Start-Process python `
+$proc = Start-Process -FilePath $Python `
     -ArgumentList @("worker/main.py", "--headless") `
     -WorkingDirectory $Root `
     -RedirectStandardOutput $outLog `

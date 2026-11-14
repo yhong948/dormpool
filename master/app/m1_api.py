@@ -236,6 +236,7 @@ def register_worker(body: dict):
             gpu_vram_gb=body.get("gpu_vram_gb"),
             max_slots=int(body.get("max_slots") or 1),
             executor_version=str(body.get("executor_version") or "1"),
+            supported_task_types=body.get("supported_task_types"),
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=f"invalid capability: {exc}")

@@ -68,6 +68,7 @@ class WorkerCapability:
     gpu_vram_gb:      Optional[float] = None
     max_slots:        int             = 1    # max concurrent tasks this node accepts
     executor_version: str             = "1"
+    supported_task_types: Optional[list[str]] = None
 
 @dataclass
 class WorkerHeartbeat:

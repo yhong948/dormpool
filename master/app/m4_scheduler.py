@@ -135,6 +135,9 @@ class TaskScheduler:
 
     @staticmethod
     def _worker_matches(worker, task) -> bool:
+        supported = worker.capability.supported_task_types
+        if task.task_type not in (supported if supported is not None else ["image_thumb"]):
+            return False
         req = task.resource_req or {}
         if req.get("gpu") and not worker.capability.gpu_name:
             return False

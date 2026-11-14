@@ -140,6 +140,21 @@ class MasterConnector:
         monitor = monitor or self.agent.monitor
         # ResourceMonitor caches the sniffed capability per process.
         capability = monitor.capability(self.cfg.worker_id)
+        supported = ["image_thumb"]
+        from executor.workload.image_thumb_gpu import gpu_summary
+        from executor.workload.convnext_infer import backend_summary
+        gpu = gpu_summary()
+        convnext = backend_summary()
+        if gpu.get("available"):
+            supported.append("image_thumb_gpu")
+            capability.gpu_name = gpu["name"]
+            capability.gpu_vram_gb = gpu["vram_gb"]
+        if convnext.get("available") and convnext.get("device") == "cuda":
+            supported.append("convnext_infer")
+            capability.gpu_name = convnext["gpu"]
+        capability.supported_task_types = supported
+        log.info("executor Python=%s supported=%s CuPy=%s ConvNeXt=%s",
+                 __import__('sys').executable, supported, gpu, convnext)
         body = dataclasses.asdict(capability)
         reply = self._post("/workers/register", body) or {}
         log.info(

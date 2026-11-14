@@ -29,7 +29,7 @@ image_thumb_gpu uses: verify integrity, not cross-implementation equality.
 
 Weights
 -------
-Loaded from DORMPOOL_CONVNEXT_WEIGHTS (default models/convnext_small-0c510722.pth).
+Loaded from DORMPOOL_CONVNEXT_WEIGHTS (default data/convnext_small-0c510722.pth).
 The file is the official Torchvision checkpoint, so the architecture is built
 with convnext_small(weights=None) and the state dict loaded from disk — never
 downloaded at task time, which would make an offline demo hang.
@@ -50,7 +50,7 @@ LOGIT_DIR = "logits/"
 INPUT_SIZE = (224, 224)
 
 WEIGHTS_ENV = "DORMPOOL_CONVNEXT_WEIGHTS"
-DEFAULT_WEIGHTS = "models/convnext_small-0c510722.pth"
+DEFAULT_WEIGHTS = "data/convnext_small-0c510722.pth"
 DEVICE_ENV = "DORMPOOL_CONVNEXT_DEVICE"      # auto | cpu | cuda
 DELAY_ENV = "DORMPOOL_EXECUTOR_DELAY_MS"
 
@@ -96,7 +96,7 @@ def _load_model():
             f"the official convnext_small-0c510722.pth there"
         )
 
-    want = (os.environ.get(DEVICE_ENV) or "auto").strip().lower()
+    want = (os.environ.get(DEVICE_ENV) or "cuda").strip().lower()
     if want == "cuda" and not torch.cuda.is_available():
         raise TorchUnavailable("DORMPOOL_CONVNEXT_DEVICE=cuda but CUDA is not available")
     if want == "cpu":
@@ -118,6 +118,9 @@ def _load_model():
         _categories = None
 
     _model, _device = model, device
+    import sys
+    print(f"ConvNeXt loaded weights={path} device={device} torch={torch.__version__}",
+          file=sys.stderr, flush=True)
     return _model, _device, _categories
 
 

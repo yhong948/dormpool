@@ -1,0 +1,7 @@
+# Python 3.14, Windows NVIDIA GPU; tested with the CUDA 13.2 driver.
+--extra-index-url https://download.pytorch.org/whl/cu132
+-r requirements.txt
+torch==2.15.0+cu132
+torchvision==0.29.2+cu132
+cupy-cuda13x[ctk]==14.2.0
+cuda-toolkit==13.2.2

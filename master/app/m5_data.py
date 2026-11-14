@@ -182,6 +182,7 @@ class DataManager:
             merged: Dict[str, dict] = {}
             blobs: Dict[str, bytes] = {}
             seen_thumb_names: set = set()
+            manifest_name = None
 
             for task_id in task_ids:
                 task_zip = os.path.join(out_folder, f"{task_id}.zip")
@@ -189,18 +190,30 @@ class DataManager:
                     continue
                 try:
                     with zipfile.ZipFile(task_zip, "r") as zin:
-                        if MANIFEST_NAME not in zin.namelist():
-                            continue
-                        manifest = json.loads(zin.read(MANIFEST_NAME).decode("utf-8"))
+                        current_manifest = ("predictions.json" if "predictions.json" in zin.namelist()
+                                            else MANIFEST_NAME)
+                        if current_manifest not in zin.namelist():
+                            return None
+                        if manifest_name is not None and manifest_name != current_manifest:
+                            return None
+                        manifest_name = current_manifest
+                        manifest = json.loads(zin.read(current_manifest).decode("utf-8"))
                         for entry in manifest:
                             input_name = entry.get("input_name")
                             if not input_name or input_name in merged:
                                 continue          # first success wins, no double count
-                            out_name = entry.get("output_name")
+                            field = "logits_name" if current_manifest == "predictions.json" else "output_name"
+                            out_name = entry.get(field)
                             if not out_name or out_name not in zin.namelist():
                                 continue
+                            # Shards can contain equal basenames from different folders.
+                            if out_name in blobs:
+                                out_name = f"{out_name.rsplit('/', 1)[0]}/{task_id}-{out_name.rsplit('/', 1)[-1]}"
+                            entry = dict(entry)
+                            original_name = entry[field]
+                            entry[field] = out_name
                             merged[input_name] = entry
-                            blobs[out_name] = zin.read(out_name)
+                            blobs[out_name] = zin.read(original_name)
                             seen_thumb_names.add(out_name)
                 except (zipfile.BadZipFile, OSError, ValueError, json.JSONDecodeError):
                     continue
@@ -215,7 +228,7 @@ class DataManager:
                 payload = json.dumps(
                     ordered, sort_keys=True, ensure_ascii=False, separators=(",", ":")
                 ).encode("utf-8")
-                zout.writestr(_zip_info(MANIFEST_NAME), payload)
+                zout.writestr(_zip_info(manifest_name), payload)
 
             return f"outputs/{job_id}/result.zip"
 
