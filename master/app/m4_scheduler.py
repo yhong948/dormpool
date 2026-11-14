@@ -1,112 +1,349 @@
 """
 master/app/m4_scheduler.py  —  M4 Task Scheduler
 ==================================================
-Person A owns this file.
+Owner: Person A.
 
-Responsibility:
-  - Match pending Tasks to available Workers (capability check)
-  - Create Attempt records with execution leases
-  - Expire overdue leases and re-queue their Tasks
-  - Commit results and delegate to M3/M5
+Worker-pull scheduling:
+  assign_task()   — pick a compatible pending Task, create an Attempt with a
+                    lease, all under ONE lock (this is what proves "no task was
+                    handed to two workers at once")
+  renew_lease()   — extend a running attempt
+  commit_result() — accept or discard a result; discard is how a late result
+                    from a node that already lost its lease is prevented from
+                    overwriting a confirmed one
+  expiry loop     — an attempt past its lease becomes EXPIRED and the task is
+                    retried
+
+Only *succeeded* attempts ever reach M6.
 """
 
-import threading, time
+from __future__ import annotations
+
+import threading
+import time
 from dataclasses import asdict
-from typing import Dict, Optional
+from typing import Callable, Dict, List, Optional
+
 from shared.contracts import (
-    Task, Attempt, TaskStatus, AttemptStatus,
-    LEASE_DURATION, WORKER_TIMEOUT,
+    Attempt,
+    AttemptStatus,
+    LEASE_DURATION,
+    TaskStatus,
 )
-from master.app.m2_registry import registry
-from master.app.m3_job import job_manager
+
+# Hooks installed by the composition root to avoid import cycles.
+_on_success: Optional[Callable[[str, str, str, int], None]] = None   # task, job, worker, units
+_on_attempt_created: Optional[Callable[[str], None]] = None
+_validate = None            # callable(output_ref, task_meta) -> units
+_resolve_output = None      # callable(output_ref) -> local path or None
+
+
+def bind_hooks(on_success=None, on_attempt_created=None, validate=None,
+               resolve_output=None) -> None:
+    global _on_success, _on_attempt_created, _validate, _resolve_output
+    if on_success is not None:
+        _on_success = on_success
+    if on_attempt_created is not None:
+        _on_attempt_created = on_attempt_created
+    if validate is not None:
+        _validate = validate
+    if resolve_output is not None:
+        _resolve_output = resolve_output
 
 
 class TaskScheduler:
-    def __init__(self):
-        self._attempts: Dict[str, Attempt] = {}
-        self._lock = threading.Lock()
-        t = threading.Thread(target=self._lease_expiry_loop, daemon=True)
-        t.start()
+    def __init__(self, jobs, registry):
+        self._jobs = jobs
+        self._registry = registry
+        # attempt_id -> {task_id, worker_id, status, lease_expires, started_at, ...}
+        self._attempts: Dict[str, dict] = {}
+        self._lock = threading.RLock()
+        self._stop = threading.Event()
+        self._thread: Optional[threading.Thread] = None
 
-    # ── Worker pulls a task ───────────────────────────────────────────────────
+    # ── lifecycle ────────────────────────────────────────────────────────────
+
+    def start(self) -> None:
+        with self._lock:
+            if self._thread and self._thread.is_alive():
+                return
+            self._stop.clear()
+            self._thread = threading.Thread(
+                target=self._lease_loop, name="m4-lease", daemon=True
+            )
+            self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+
+    # ── assign ───────────────────────────────────────────────────────────────
 
     def assign_task(self, worker_id: str, free_slots: int) -> Optional[dict]:
-        """
-        Find a pending Task compatible with this Worker and assign it.
-        Returns the Task dict + Attempt dict, or None if nothing is available.
-        """
-        worker = registry.get_worker(worker_id)
-        if not worker or free_slots < 1:
+        """Atomically pick, assign and lease one task for this worker."""
+        if free_slots < 1:
+            return None
+        worker = self._registry.get_worker(worker_id)
+        if worker is None:
             return None
 
+        payload = None
+        created_attempt_id = None
+
         with self._lock:
-            for task in job_manager.pending_tasks():
-                if self._worker_matches(worker, task):
-                    attempt = Attempt(
-                        task_id=task.task_id,
-                        worker_id=worker_id,
-                        lease_expires=time.time() + LEASE_DURATION,
-                    )
-                    task.status          = TaskStatus.ASSIGNED
-                    task.assigned_worker = worker_id
-                    self._attempts[attempt.attempt_id] = attempt
-                    return {"task": asdict(task), "attempt": asdict(attempt)}
-        return None
+            # Re-check willingness inside the lock: the heartbeat could have
+            # paused this node between the HTTP hop and here. Capacity comes from
+            # the claim request itself, which is live — the cached free_slots is
+            # only as fresh as the last heartbeat.
+            if not self._registry.can_accept_work(worker_id):
+                return None
 
-    # ── Lease management ──────────────────────────────────────────────────────
+            for task in self._jobs.pending_tasks():
+                if not self._worker_matches(worker, task):
+                    continue
 
-    def renew_lease(self, attempt_id: str) -> dict:
-        with self._lock:
-            att = self._attempts.get(attempt_id)
-            if not att or att.status != AttemptStatus.RUNNING:
-                return {"error": "attempt not found or not running"}
-            att.lease_expires = time.time() + LEASE_DURATION
-        return {"lease_expires": att.lease_expires}
+                attempt = Attempt(
+                    task_id=task.task_id,
+                    worker_id=worker_id,
+                    lease_expires=time.time() + LEASE_DURATION,
+                )
+                task.status = TaskStatus.ASSIGNED
+                task.assigned_worker = worker_id
 
-    # ── Result commit ─────────────────────────────────────────────────────────
+                record = asdict(attempt)
+                record["status"] = attempt.status.value
+                self._attempts[attempt.attempt_id] = record
+                self._jobs.add_attempt(task.task_id, record)
 
-    def commit_result(self, attempt_id: str, output_ref: str,
-                      units_done: int, error_msg: Optional[str]) -> dict:
-        with self._lock:
-            att = self._attempts.get(attempt_id)
-            if not att:
-                return {"error": "unknown attempt"}
-            if att.status != AttemptStatus.RUNNING:
-                # Late arrival after expiry — discard; do not overwrite confirmed result
-                return {"error": "attempt already closed", "discarded": True}
-            att.finished_at = time.time()
-            if error_msg:
-                att.status    = AttemptStatus.FAILED
-                att.error_msg = error_msg
-                job_manager.mark_task_failed(att.task_id, error_msg)
-            else:
-                att.status     = AttemptStatus.SUCCEEDED
-                att.output_ref = output_ref
-                att.units_done = units_done
-                job_manager.mark_task_done(att.task_id, output_ref)
-                # TODO (Person A): trigger M6 metric recording here
-        return {"committed": True}
+                payload = {
+                    "task": self._task_payload(task),
+                    "attempt": dict(record),
+                }
+                created_attempt_id = attempt.attempt_id
+                break                      # one task per claim request
 
-    # ── Lease expiry background loop ──────────────────────────────────────────
-
-    def _lease_expiry_loop(self):
-        while True:
-            time.sleep(10)
-            now = time.time()
-            with self._lock:
-                for att in list(self._attempts.values()):
-                    if att.status == AttemptStatus.RUNNING and att.lease_expires < now:
-                        att.status = AttemptStatus.EXPIRED
-                        job_manager.mark_task_failed(att.task_id, "lease expired")
-
-    # ── Helpers ───────────────────────────────────────────────────────────────
+        if payload is None:
+            return None
+        if _on_attempt_created and created_attempt_id:
+            _safe(_on_attempt_created, created_attempt_id)
+        return payload
 
     @staticmethod
-    def _worker_matches(worker, task: Task) -> bool:
-        req = task.resource_req
+    def _task_payload(task) -> dict:
+        payload = asdict(task)
+        payload["status"] = task.status.value
+        return payload
+
+    @staticmethod
+    def _worker_matches(worker, task) -> bool:
+        req = task.resource_req or {}
         if req.get("gpu") and not worker.capability.gpu_name:
             return False
         return True
 
+    # ── lease ────────────────────────────────────────────────────────────────
 
-scheduler = TaskScheduler()
+    def renew_lease(self, attempt_id: str) -> dict:
+        with self._lock:
+            record = self._attempts.get(attempt_id)
+            if record is None or record["status"] != AttemptStatus.RUNNING.value:
+                return {"error": "attempt not found or not running"}
+            record["lease_expires"] = time.time() + LEASE_DURATION
+            self._jobs.update_attempt(
+                record["task_id"], attempt_id,
+                lease_expires=record["lease_expires"],
+            )
+            return {"lease_expires": record["lease_expires"]}
+
+    def mark_running(self, attempt_id: str) -> None:
+        """Optional explicit RUNNING signal; assignment already implies it."""
+        with self._lock:
+            record = self._attempts.get(attempt_id)
+            if record and record["status"] == AttemptStatus.RUNNING.value:
+                self._jobs.mark_task_running(record["task_id"], record["worker_id"])
+
+    # ── commit ───────────────────────────────────────────────────────────────
+
+    def commit_result(self, attempt_id: str, output_ref: str,
+                      units_done: int, error_msg: Optional[str]) -> dict:
+        """Accept or discard a result. Never overwrites a confirmed outcome."""
+        accepted_units = 0
+
+        with self._lock:
+            record = self._attempts.get(attempt_id)
+            if record is None:
+                return {"error": "unknown attempt"}
+
+            if record["status"] != AttemptStatus.RUNNING.value:
+                # Late arrival after expiry / after a sibling already won.
+                return {"discarded": True, "reason": "attempt already closed"}
+
+            task_id = record["task_id"]
+            worker_id = record["worker_id"]
+            task = self._jobs.get_task(task_id)
+            if task is None:
+                return {"error": "unknown task"}
+
+            if task.status == TaskStatus.SUCCEEDED:
+                # Another attempt already produced the confirmed result.
+                record["status"] = AttemptStatus.EXPIRED.value
+                self._jobs.update_attempt(task_id, attempt_id,
+                                          status=AttemptStatus.EXPIRED.value)
+                return {"discarded": True, "reason": "task already confirmed"}
+
+            now = time.time()
+
+            if error_msg:
+                record["status"] = AttemptStatus.FAILED.value
+                record["finished_at"] = now
+                record["error_msg"] = str(error_msg)[:1000]
+                record["units_done"] = 0
+                self._jobs.update_attempt(
+                    task_id, attempt_id,
+                    status=AttemptStatus.FAILED.value,
+                    finished_at=now,
+                    error_msg=record["error_msg"],
+                    units_done=0,
+                )
+                job_id = record.get("job_id")
+                self._jobs.mark_task_failed(task_id, record["error_msg"])
+                return {"committed": False, "failed": True, "task_id": task_id}
+
+            # ── verify before trusting the number the worker reported ────────
+            verified_units = int(units_done)
+            if _validate is not None:
+                meta = {
+                    "task_id": task_id,
+                    "task_type": task.task_type,
+                    "input_ref": task.input_ref,
+                }
+                path = None
+                if _resolve_output is not None and output_ref:
+                    try:
+                        path = _resolve_output(output_ref)
+                    except Exception:
+                        path = None
+                if path:
+                    meta["input_abs_path"] = self._input_abs_path(task.input_ref)
+                    try:
+                        verified_units = int(_validate(path, meta))
+                    except Exception as exc:
+                        record["status"] = AttemptStatus.FAILED.value
+                        record["finished_at"] = now
+                        record["error_msg"] = f"validation failed: {exc}"
+                        record["units_done"] = 0
+                        self._jobs.update_attempt(
+                            task_id, attempt_id,
+                            status=AttemptStatus.FAILED.value,
+                            finished_at=now,
+                            error_msg=record["error_msg"],
+                            units_done=0,
+                        )
+                        self._jobs.mark_task_failed(task_id, record["error_msg"])
+                        return {
+                            "committed": False, "failed": True,
+                            "validation_error": str(exc)[:400],
+                        }
+
+            record["status"] = AttemptStatus.SUCCEEDED.value
+            record["finished_at"] = now
+            record["output_ref"] = output_ref
+            record["units_done"] = verified_units
+            accepted_units = verified_units
+
+            self._jobs.update_attempt(
+                task_id, attempt_id,
+                status=AttemptStatus.SUCCEEDED.value,
+                finished_at=now,
+                output_ref=output_ref,
+                units_done=verified_units,
+            )
+            self._jobs.mark_task_done(task_id, output_ref)
+
+        # Record only on the success path, once per attempt (technical point J1).
+        if _on_success and accepted_units >= 0:
+            _safe(_on_success, task_id, task.job_id, worker_id, accepted_units)
+
+        return {"committed": True, "units_done": accepted_units, "task_id": task_id}
+
+    def _input_abs_path(self, input_ref: str) -> Optional[str]:
+        resolver = _resolve_output
+        if resolver is None or not input_ref:
+            return None
+        try:
+            return resolver(input_ref)
+        except Exception:
+            return None
+
+    # ── reclaim ──────────────────────────────────────────────────────────────
+
+    def reclaim_worker(self, worker_id: str) -> List[str]:
+        """A node went OFFLINE: close its open attempts and requeue their tasks."""
+        reclaimed: List[str] = []
+        with self._lock:
+            for attempt_id, record in self._attempts.items():
+                if record["worker_id"] != worker_id:
+                    continue
+                if record["status"] != AttemptStatus.RUNNING.value:
+                    continue
+                now = time.time()
+                record["status"] = AttemptStatus.EXPIRED.value
+                record["finished_at"] = now
+                record["units_done"] = 0
+                self._jobs.update_attempt(
+                    record["task_id"], attempt_id,
+                    status=AttemptStatus.EXPIRED.value,
+                    finished_at=now,
+                    units_done=0,
+                )
+                self._jobs.requeue_task(record["task_id"], "worker offline")
+                reclaimed.append(record["task_id"])
+        return reclaimed
+
+    # ── lease expiry loop ────────────────────────────────────────────────────
+
+    def _lease_loop(self) -> None:
+        while not self._stop.wait(10):
+            self.scan_expired_leases()
+
+    def scan_expired_leases(self) -> List[str]:
+        now = time.time()
+        expired: List[str] = []
+        with self._lock:
+            for attempt_id, record in self._attempts.items():
+                if record["status"] != AttemptStatus.RUNNING.value:
+                    continue
+                if float(record.get("lease_expires") or 0) >= now:
+                    continue
+                record["status"] = AttemptStatus.EXPIRED.value
+                record["finished_at"] = now
+                record["units_done"] = 0
+                self._jobs.update_attempt(
+                    record["task_id"], attempt_id,
+                    status=AttemptStatus.EXPIRED.value,
+                    finished_at=now,
+                    units_done=0,
+                )
+                self._jobs.mark_task_failed(record["task_id"], "lease expired")
+                expired.append(attempt_id)
+        return expired
+
+    # ── introspection (used by tests) ────────────────────────────────────────
+
+    def attempt(self, attempt_id: str) -> Optional[dict]:
+        with self._lock:
+            record = self._attempts.get(attempt_id)
+            return dict(record) if record else None
+
+    def open_attempts(self) -> List[dict]:
+        with self._lock:
+            return [
+                dict(r) for r in self._attempts.values()
+                if r["status"] == AttemptStatus.RUNNING.value
+            ]
+
+
+def _safe(fn, *args) -> None:
+    try:
+        fn(*args)
+    except Exception:  # pragma: no cover
+        pass

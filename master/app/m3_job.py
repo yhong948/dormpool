@@ -1,112 +1,298 @@
 """
 master/app/m3_job.py  —  M3 Job Manager
 ========================================
-Person A owns this file.
+Owner: Person A.
 
-Responsibility:
-  - Create a Job from a user submission
-  - Split Job into Tasks (sharding logic lives here)
-  - Track Job progress as Tasks complete
-  - Determine Job terminal state (COMPLETED / FAILED)
+Owns the Job/Task lifecycle:
+  * create_job()   — build a Job and split it into shards-sized Tasks
+  * pending_tasks()— what M4 may hand out (PENDING + RETRY_PENDING)
+  * mark_task_done / mark_task_failed — with the retry policy
+  * Job终态: every task succeeded -> COMPLETED, any task permanently failed -> FAILED
+
+Sharding is driven by SHARD_SIZE (env, default 3). Each Task carries
+input_ref = "inputs/<job_id>/shard_<i>.zip" which M5 produced.
+
+The response view (docs/验收门禁.md §0.6 item 3) nests attempts inside each task,
+so G3 can prove "no task was handed to two workers at once".
 """
 
+from __future__ import annotations
+
+import os
 import threading
+import time
+import uuid
 from dataclasses import asdict
-from typing import Dict, List, Optional
-from shared.contracts import Job, Task, JobStatus, TaskStatus
+from typing import Callable, Dict, List, Optional
+
+from shared.contracts import Job, JobStatus, Task, TaskStatus, AttemptStatus
+
+DEFAULT_SHARD_SIZE = 3
+
+
+def shard_size() -> int:
+    """SHARD_SIZE from the environment, clamped to a sane range."""
+    raw = os.environ.get("SHARD_SIZE", str(DEFAULT_SHARD_SIZE))
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return DEFAULT_SHARD_SIZE
+    return max(1, value)
+
+
+# Hook installed by the composition root: called once when a Job completes,
+# so M5 can aggregate and M6 can freeze the measurement window.
+_on_job_completed: Optional[Callable[[str], None]] = None
+
+
+def bind_hooks(on_job_completed=None) -> None:
+    global _on_job_completed
+    if on_job_completed is not None:
+        _on_job_completed = on_job_completed
 
 
 class JobManager:
     def __init__(self):
-        self._jobs:  Dict[str, Job]        = {}
-        self._tasks: Dict[str, List[Task]] = {}  # job_id → tasks
-        self._lock   = threading.Lock()
+        self._jobs: Dict[str, Job] = {}
+        self._tasks: Dict[str, List[Task]] = {}          # job_id -> tasks in shard order
+        self._task_index: Dict[str, Task] = {}           # task_id -> Task
+        self._attempts: Dict[str, List[dict]] = {}       # task_id -> attempt dicts
+        self._lock = threading.RLock()
 
-    # ── Job creation ──────────────────────────────────────────────────────────
+    # ── creation ─────────────────────────────────────────────────────────────
 
-    def create_job(self, task_type: str, input_ref: str, num_shards: int = 1) -> Job:
+    def create_job(self, task_type: str, input_refs: List[str],
+                   input_zip_ref: str = "", job_id: Optional[str] = None) -> Job:
+        """Create a Job whose Tasks are one per shard reference.
+
+        input_refs is produced by M5 when it splits the uploaded archive.
+        `job_id` lets the caller pre-allocate the id so M5 can write the upload
+        under a folder that already carries it.
         """
-        Create a Job and split it into `num_shards` Tasks.
-        Each Task gets an input_ref of the form "<input_ref>/<shard_index>".
-        Person A: replace shard naming once M5 defines actual file layout.
-        """
-        job = Job(task_type=task_type, input_ref=input_ref, total_tasks=num_shards)
+        total = len(input_refs)
+        job = Job(
+            job_id=job_id or ("job-" + uuid.uuid4().hex[:8]),
+            task_type=task_type,
+            input_ref=input_zip_ref or (input_refs[0] if input_refs else ""),
+            status=JobStatus.QUEUED,
+            total_tasks=total,
+        )
         tasks = [
             Task(
                 job_id=job.job_id,
                 task_type=task_type,
-                input_ref=f"{input_ref}/shard_{i}",
+                input_ref=ref,
+                resource_req={"gpu": False},
             )
-            for i in range(num_shards)
+            for ref in input_refs
         ]
         with self._lock:
-            self._jobs[job.job_id]  = job
+            self._jobs[job.job_id] = job
             self._tasks[job.job_id] = tasks
+            for task in tasks:
+                self._task_index[task.task_id] = task
+                self._attempts[task.task_id] = []
+            if total > 0:
+                job.status = JobStatus.RUNNING
         return job
 
-    # ── Queries ───────────────────────────────────────────────────────────────
+    # ── queries ──────────────────────────────────────────────────────────────
 
     def get_job(self, job_id: str) -> Optional[Job]:
-        return self._jobs.get(job_id)
+        with self._lock:
+            return self._jobs.get(job_id)
 
-    def get_tasks(self, job_id: str) -> List[Task]:
-        return self._tasks.get(job_id, [])
+    def get_task(self, task_id: str) -> Optional[Task]:
+        with self._lock:
+            return self._task_index.get(task_id)
+
+    def tasks_of(self, job_id: str) -> List[Task]:
+        with self._lock:
+            return list(self._tasks.get(job_id, []))
+
+    def pending_tasks(self) -> List[Task]:
+        """Tasks M4 may assign, oldest first."""
+        with self._lock:
+            result = [
+                t for t in self._task_index.values()
+                if t.status in (TaskStatus.PENDING, TaskStatus.RETRY_PENDING)
+            ]
+        result.sort(key=lambda t: t.input_ref)
+        return result
+
+    def job_view(self, job_id: str) -> Optional[dict]:
+        """Job payload with nested tasks[] and attempts[] (gate response shape)."""
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None:
+                return None
+            payload = asdict(job)
+            payload["status"] = job.status.value
+            payload["tasks"] = [
+                self._task_view(t) for t in self._tasks.get(job_id, [])
+            ]
+            return payload
+
+    def _task_view(self, task: Task) -> dict:
+        view = asdict(task)
+        view["status"] = task.status.value
+        view["attempts"] = [
+            dict(a) for a in self._attempts.get(task.task_id, [])
+        ]
+        return view
 
     def list_jobs(self) -> List[dict]:
         with self._lock:
-            return [asdict(j) for j in self._jobs.values()]
+            out = []
+            for job in self._jobs.values():
+                item = asdict(job)
+                item["status"] = job.status.value
+                out.append(item)
+            return out
 
-    def pending_tasks(self) -> List[Task]:
-        """Return all tasks that are ready to be scheduled (PENDING or RETRY_PENDING)."""
-        result = []
+    def ledger(self, job_id: str) -> dict:
+        """Measurement inputs M6 needs for a finished job."""
         with self._lock:
-            for tasks in self._tasks.values():
-                for t in tasks:
-                    if t.status in (TaskStatus.PENDING, TaskStatus.RETRY_PENDING):
-                        result.append(t)
-        return result
+            job = self._jobs.get(job_id)
+            if job is None:
+                return {}
+            units_total = 0
+            per_worker_units: Dict[str, float] = {}
+            per_worker_busy: Dict[str, float] = {}
+            succeeded = 0
+            for task in self._tasks.get(job_id, []):
+                for attempt in self._attempts.get(task.task_id, []):
+                    if attempt.get("status") != AttemptStatus.SUCCEEDED.value:
+                        continue
+                    units = int(attempt.get("units_done") or 0)
+                    worker = attempt.get("worker_id") or "unknown"
+                    units_total += units
+                    per_worker_units[worker] = per_worker_units.get(worker, 0.0) + units
+                    started = attempt.get("started_at") or 0.0
+                    finished = attempt.get("finished_at") or started
+                    busy = max(0.0, float(finished) - float(started))
+                    per_worker_busy[worker] = per_worker_busy.get(worker, 0.0) + busy
+                    succeeded += 1
+            return {
+                "job_id": job_id,
+                "status": job.status.value,
+                "created_at": job.created_at,
+                "finished_at": job.finished_at,
+                "units_total": units_total,
+                "succeeded_attempts": succeeded,
+                "per_worker_units": per_worker_units,
+                "per_worker_busy": per_worker_busy,
+            }
 
-    # ── Progress updates (called by M4 Scheduler) ─────────────────────────────
-
-    def mark_task_done(self, task_id: str, output_ref: str) -> None:
+    def succeeded_task_ids(self, job_id: str) -> List[str]:
         with self._lock:
-            task = self._find_task(task_id)
-            if not task:
+            return [
+                t.task_id for t in self._tasks.get(job_id, [])
+                if t.status == TaskStatus.SUCCEEDED
+            ]
+
+    # ── attempt bookkeeping (called by M4) ───────────────────────────────────
+
+    def add_attempt(self, task_id: str, attempt: dict) -> None:
+        with self._lock:
+            self._attempts.setdefault(task_id, []).append(attempt)
+
+    def update_attempt(self, task_id: str, attempt_id: str, **fields) -> Optional[dict]:
+        with self._lock:
+            for attempt in self._attempts.get(task_id, []):
+                if attempt.get("attempt_id") == attempt_id:
+                    attempt.update(fields)
+                    return attempt
+        return None
+
+    def attempts_of(self, task_id: str) -> List[dict]:
+        with self._lock:
+            return [dict(a) for a in self._attempts.get(task_id, [])]
+
+    # ── transitions ──────────────────────────────────────────────────────────
+
+    def mark_task_running(self, task_id: str, worker_id: str) -> None:
+        with self._lock:
+            task = self._task_index.get(task_id)
+            if task is None:
                 return
-            task.status     = TaskStatus.SUCCEEDED
+            if task.status == TaskStatus.ASSIGNED:
+                task.status = TaskStatus.RUNNING
+            task.assigned_worker = worker_id
+
+    def mark_task_done(self, task_id: str, output_ref: str) -> Optional[str]:
+        """Mark a task SUCCEEDED. Returns the job_id when the job just completed."""
+        with self._lock:
+            task = self._task_index.get(task_id)
+            if task is None:
+                return None
+            task.status = TaskStatus.SUCCEEDED
             task.output_ref = output_ref
-            job = self._jobs[task.job_id]
-            job.done_tasks += 1
-            job.status = JobStatus.RUNNING
-            # check completion
-            all_tasks = self._tasks[task.job_id]
-            if all(t.status == TaskStatus.SUCCEEDED for t in all_tasks):
-                import time
-                job.status      = JobStatus.COMPLETED
-                job.finished_at = time.time()
 
-    def mark_task_failed(self, task_id: str, error: str) -> None:
+            job = self._jobs.get(task.job_id)
+            if job is None:
+                return None
+            job.done_tasks = sum(
+                1 for t in self._tasks.get(job.job_id, [])
+                if t.status == TaskStatus.SUCCEEDED
+            )
+            if job.status == JobStatus.QUEUED:
+                job.status = JobStatus.RUNNING
+
+            all_done = all(
+                t.status == TaskStatus.SUCCEEDED
+                for t in self._tasks.get(job.job_id, [])
+            )
+            just_completed = False
+            if all_done and job.status != JobStatus.COMPLETED:
+                job.status = JobStatus.COMPLETED
+                job.finished_at = time.time()
+                just_completed = True
+
+        if just_completed and _on_job_completed:
+            try:
+                _on_job_completed(task.job_id)
+            except Exception:  # pragma: no cover - aggregation is best-effort here
+                pass
+        return task.job_id if just_completed else None
+
+    def mark_task_failed(self, task_id: str, error: str) -> Optional[str]:
+        """Apply the retry policy. Returns the job_id if the job just failed."""
         with self._lock:
-            task = self._find_task(task_id)
-            if not task:
-                return
+            task = self._task_index.get(task_id)
+            if task is None:
+                return None
+            if task.status == TaskStatus.SUCCEEDED:
+                return None                    # late failure must never undo success
+
+            job = self._jobs.get(task.job_id)
             if task.retry_count < task.max_retries:
                 task.retry_count += 1
                 task.status = TaskStatus.RETRY_PENDING
                 task.assigned_worker = None
-            else:
-                task.status = TaskStatus.FAILED
-                # propagate to Job if any task permanently fails
-                job = self._jobs.get(task.job_id)
-                if job:
-                    job.status = JobStatus.FAILED
+                return None
 
-    def _find_task(self, task_id: str) -> Optional[Task]:
-        for tasks in self._tasks.values():
-            for t in tasks:
-                if t.task_id == task_id:
-                    return t
-        return None
+            task.status = TaskStatus.FAILED
+            if job is not None and job.status != JobStatus.COMPLETED:
+                job.status = JobStatus.FAILED
+                if job.finished_at is None:
+                    job.finished_at = time.time()
+                return job.job_id
+            return None
+
+    def requeue_task(self, task_id: str, reason: str) -> None:
+        """Put a task back without consuming a retry (used when a node vanishes).
+
+        The worker never got to report, so the attempt was never confirmed either
+        way; the task must become available again promptly rather than wait for
+        the full lease to lapse.
+        """
+        with self._lock:
+            task = self._task_index.get(task_id)
+            if task is None or task.status in (TaskStatus.SUCCEEDED, TaskStatus.FAILED):
+                return
+            task.status = TaskStatus.RETRY_PENDING
+            task.assigned_worker = None
 
 
 job_manager = JobManager()
