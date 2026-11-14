@@ -55,7 +55,6 @@ dormpool/
 | **目录隔离** | 每人只改自己目录内的文件；不改别人目录 |
 | **shared/ 变更** | 修改 `shared/contracts.py` 须三人同意，单独 commit 推 main，各人 rebase 后再继续 |
 | **接口先于实现** | M1 API stub 先上线（返回 501），B/C 才能联调；C 的 executor 子进程接口已固定 |
-| **分支命名** | `feat/A-<name>` / `feat/B-<name>` / `feat/C-<name>` |
 | **合并顺序** | shared → master (A) → worker (B) → executor+console (C) |
 
 ---

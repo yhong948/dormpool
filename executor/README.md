@@ -1,6 +1,6 @@
 # executor/ — Task Executor（计算执行器）
 
-**负责人：👤 Person C · 分支：`feat/C-executor-console`**
+**负责人：👤 Person C**
 
 ## 功能
 

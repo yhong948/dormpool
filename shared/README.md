@@ -1,6 +1,6 @@
 # shared/ — 共享契约（FROZEN）
 
-**维护规则：🔒 三人共同维护。修改 `contracts.py` 须三人同意，单独 commit 推 main，其他人 rebase 后再继续。**
+**维护规则：🔒 三人共同维护。修改 `contracts.py` 须三人同意，单独 commit 推 main，其他人 rebase 后再继续。不绑定固定分支名，各人自行命名开发分支。**
 
 ## 功能
 

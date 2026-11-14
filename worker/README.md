@@ -1,6 +1,6 @@
 # worker/ — Worker Agent（本地自治服务）
 
-**负责人：👤 Person B · 分支：`feat/B-worker`**
+**负责人：👤 Person B**
 
 ## 功能
 

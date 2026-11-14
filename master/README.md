@@ -1,6 +1,6 @@
 # master/ — Master Server（中心协调服务）
 
-**负责人：👤 Person A · 分支：`feat/A-master`**
+**负责人：👤 Person A**
 
 ## 功能
 

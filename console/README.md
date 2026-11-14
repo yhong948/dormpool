@@ -1,6 +1,6 @@
 # console/ — Team Console（统一用户界面）
 
-**负责人：👤 Person C · 分支：`feat/C-executor-console`**
+**负责人：👤 Person C**
 
 ## 功能
 
