@@ -1,171 +1,356 @@
 <!DOCTYPE html>
-<!--
-console/index.html  —  Team Console  (Person C owns this file)
-
-Responsibility:
-  - Submit jobs (upload input file + pick task type)
-  - Poll and display job progress
-  - Show per-device worker status
-  - Download job result when complete
-
-This is a single-file UI that talks directly to the Master REST API.
-No build step required; open via http://<master>:8000/console or serve statically.
-
-TODO (Person C):
-  1. Wire MASTER_URL to the actual deployed address.
-  2. Connect submit form to POST /jobs.
-  3. Connect worker table to GET /workers.
-  4. Connect job rows to GET /jobs/{job_id} for progress polling.
-  5. Add download link pointing to GET /jobs/{job_id}/result.
-  6. Add metrics panel using GET /metrics/summary (η_pool, S, per-device bars).
--->
 <html lang="zh">
 <head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>DormPool — Team Console</title>
-  <style>
-    :root {
-      --bg: #f7f7f8; --surface: #fff; --border: #e0e0e0;
-      --text: #1a1a1a; --muted: #6b7280;
-      --accent: #2563eb; --ok: #16a34a; --warn: #ca8a04; --err: #dc2626;
-    }
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { background: var(--bg); color: var(--text); font: 14px/1.5 system-ui, sans-serif; padding: 24px; }
-    h1   { font-size: 1.25rem; margin-bottom: 20px; }
-    h2   { font-size: 1rem; margin: 24px 0 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
-    .card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
-    table { width: 100%; border-collapse: collapse; }
-    th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--border); font-size: 13px; }
-    th { color: var(--muted); font-weight: 500; }
-    .badge { display: inline-block; padding: 1px 7px; border-radius: 999px; font-size: 11px; font-weight: 600; }
-    .badge-ok   { background:#dcfce7; color: var(--ok);   }
-    .badge-warn { background:#fef9c3; color: var(--warn); }
-    .badge-err  { background:#fee2e2; color: var(--err);  }
-    button { background: var(--accent); color: #fff; border: none; border-radius: 6px; padding: 7px 16px; cursor: pointer; font-size: 13px; }
-    button:hover { opacity:.85; }
-    input, select { border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; font-size: 13px; width: 100%; margin-bottom: 10px; }
-    label { font-size: 13px; color: var(--muted); display: block; margin-bottom: 3px; }
-  </style>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>DormPool — 团队算力池</title>
+<style>
+  :root {
+    --bg:#f6f7f9; --surface:#fff; --border:#e3e6ea; --text:#17191c; --muted:#6b7280;
+    --accent:#2f6fdd; --ok:#13803d; --okbg:#e6f5ec;
+    --warn:#8a6100; --warnbg:#fdf3d8;
+    --err:#b32020; --errbg:#fdeaea;
+    --neu:#4b5563; --neubg:#eef0f3;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+       font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+       padding:24px 20px 56px}
+  header{max-width:1180px;margin:0 auto 20px;display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
+  h1{font-size:20px;margin:0;font-weight:650}
+  .sub{color:var(--muted);font-size:13px}
+  main{max-width:1180px;margin:0 auto;display:grid;gap:18px}
+  section{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px 18px}
+  h2{font-size:13px;margin:0 0 12px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;font-weight:650}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--border);vertical-align:middle}
+  th{color:var(--muted);font-weight:600;font-size:12px;white-space:nowrap}
+  tr:last-child td{border-bottom:none}
+  .mono{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:12px}
+  .badge{display:inline-block;padding:1px 8px;border-radius:999px;font-size:11px;font-weight:650;
+         border:1px solid transparent;white-space:nowrap}
+  .b-ok{background:var(--okbg);color:var(--ok);border-color:#bfe3cd}
+  .b-warn{background:var(--warnbg);color:var(--warn);border-color:#f0dda6}
+  .b-err{background:var(--errbg);color:var(--err);border-color:#f3c9c9}
+  .b-neu{background:var(--neubg);color:var(--neu);border-color:#d9dde3}
+  form{display:grid;gap:10px;max-width:420px}
+  label{font-size:12px;color:var(--muted);display:block;margin-bottom:4px;font-weight:600}
+  select,input[type=file]{width:100%;padding:7px 9px;border:1px solid var(--border);border-radius:7px;
+                          background:#fff;font-size:13px;font-family:inherit}
+  button{padding:8px 16px;border:none;border-radius:7px;background:var(--accent);color:#fff;
+         font-size:13px;font-weight:600;cursor:pointer;font-family:inherit}
+  button:hover{filter:brightness(1.06)}
+  button:disabled{opacity:.55;cursor:default}
+  .bar{position:relative;height:7px;background:#eceef1;border-radius:4px;overflow:hidden;min-width:90px}
+  .bar > i{position:absolute;inset:0 auto 0 0;background:var(--accent);border-radius:4px}
+  .meter{height:7px;background:#eceef1;border-radius:4px;overflow:hidden;min-width:80px}
+  .meter > i{display:block;height:100%;background:#4f8fe8}
+  .msg{font-size:12px;margin-top:4px}
+  .ok{color:var(--ok)} .err{color:var(--err)} .muted{color:var(--muted)}
+  .grid3{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:14px}
+  .kpi{border:1px solid var(--border);border-radius:8px;padding:10px 12px}
+  .kpi b{display:block;font-size:20px;font-weight:650;margin-top:2px}
+  .kpi span{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+  #banner{display:none;max-width:1180px;margin:0 auto 14px;padding:9px 13px;border-radius:8px;
+          background:var(--errbg);color:var(--err);border:1px solid #f3c9c9;font-size:13px}
+  .events{font-size:12px;color:var(--muted);max-height:170px;overflow:auto}
+  .events div{padding:2px 0;border-bottom:1px dotted var(--border)}
+  @media (max-width:760px){body{padding:16px 12px 40px} section{padding:14px}}
+</style>
 </head>
 <body>
-  <h1>🖥️ DormPool — Team Console</h1>
+<header>
+  <h1>DormPool · 团队算力池</h1>
+  <span class="sub" id="endpoint"></span>
+</header>
 
-  <!-- Submit Job -->
-  <h2>Submit Job</h2>
-  <div class="card" style="max-width:420px">
-    <label>Task type</label>
-    <select id="taskType">
-      <!-- TODO (Person C): populate with actual supported task types -->
-      <option value="">— select —</option>
-    </select>
-    <label>Input file</label>
-    <input type="file" id="inputFile"/>
-    <button onclick="submitJob()">Submit</button>
-    <p id="submitMsg" style="margin-top:8px;font-size:12px;color:var(--muted)"></p>
-  </div>
+<div id="banner">与 Master 的连接中断，正在重试…</div>
 
-  <!-- Job List -->
-  <h2>Jobs</h2>
-  <div class="card">
+<main>
+  <section>
+    <h2>提交任务</h2>
+    <form id="submitForm">
+      <div>
+        <label for="taskType">任务类型</label>
+        <select id="taskType"><option value="image_thumb">image_thumb — 批量缩略图</option></select>
+      </div>
+      <div>
+        <label for="inputFile">输入文件（zip，内含图片）</label>
+        <input type="file" id="inputFile" accept=".zip"/>
+      </div>
+      <div><button type="submit" id="submitBtn">提交</button></div>
+      <div class="msg" id="submitMsg"></div>
+    </form>
+  </section>
+
+  <section>
+    <h2>任务列表</h2>
     <table>
-      <thead><tr><th>Job ID</th><th>Type</th><th>Progress</th><th>Status</th><th>Result</th></tr></thead>
-      <tbody id="jobTable"><tr><td colspan="5" style="color:var(--muted)">Loading…</td></tr></tbody>
+      <thead><tr><th>Job</th><th>类型</th><th>进度</th><th>状态</th><th>结果</th></tr></thead>
+      <tbody id="jobsBody"><tr><td colspan="5" class="muted">加载中…</td></tr></tbody>
     </table>
-  </div>
+  </section>
 
-  <!-- Worker Status -->
-  <h2>Workers</h2>
-  <div class="card">
+  <section>
+    <h2>节点</h2>
     <table>
-      <thead><tr><th>Worker ID</th><th>Host</th><th>Conn</th><th>Contrib</th><th>Slots</th><th>CPU%</th><th>GPU%</th></tr></thead>
-      <tbody id="workerTable"><tr><td colspan="7" style="color:var(--muted)">Loading…</td></tr></tbody>
+      <thead><tr><th>Worker</th><th>主机</th><th>连接</th><th>贡献</th><th>执行</th>
+             <th>空闲槽位</th><th>CPU%</th><th>GPU%</th><th>能力</th></tr></thead>
+      <tbody id="workersBody"><tr><td colspan="9" class="muted">加载中…</td></tr></tbody>
     </table>
-  </div>
+  </section>
 
-  <!-- Metrics -->
-  <h2>Pool Metrics</h2>
-  <div class="card" id="metricsPanel" style="font-size:13px;color:var(--muted)">Loading…</div>
+  <section>
+    <h2>池化指标</h2>
+    <div class="grid3">
+      <div class="kpi"><span>η_pool</span><b id="kEta">—</b></div>
+      <div class="kpi"><span>加速比 S</span><b id="kS">—</b></div>
+      <div class="kpi"><span>P_pool</span><b id="kPool">—</b></div>
+      <div class="kpi"><span>成功任务</span><b id="kRecords">—</b></div>
+    </div>
+    <table>
+      <thead><tr><th>设备</th><th>吞吐 (units/s)</th><th style="width:38%">相对</th></tr></thead>
+      <tbody id="metricsBody"><tr><td colspan="3" class="muted">暂无数据</td></tr></tbody>
+    </table>
+  </section>
 
-  <script>
-    // TODO (Person C): update MASTER_URL to deployed address
-    const MASTER_URL = "";   // e.g. "http://192.168.1.100:8000"
-    const TOKEN      = localStorage.getItem("dormpool_token") || "dev-token";
-    const H          = { "Authorization": `Bearer ${TOKEN}` };
+  <section>
+    <h2>节点事件</h2>
+    <div class="events" id="eventsBody"><span class="muted">暂无事件</span></div>
+  </section>
+</main>
 
-    async function api(path, opts={}) {
-      const r = await fetch(MASTER_URL + path, { headers: H, ...opts });
-      if (!r.ok) throw new Error(await r.text());
-      return r.json();
+<script>
+(function () {
+  "use strict";
+
+  // ── configuration ────────────────────────────────────────────────────────
+  const params = new URLSearchParams(window.location.search);
+  const override = params.get("master");
+  if (override) localStorage.setItem("dormpool_master", override);
+  const MASTER = (localStorage.getItem("dormpool_master") || "").replace(/\/+$/, "");
+  const TOKEN = localStorage.getItem("dormpool_token") || "dev-token";
+  const headers = { "Authorization": "Bearer " + TOKEN };
+
+  document.getElementById("endpoint").textContent = "API: " + (MASTER || window.location.origin);
+
+  const REQ = { jobs: 3000, workers: 3000, metrics: 5000 };
+  const timers = {};
+  let lastData = { jobs: [], workers: [], metrics: null };
+
+  // ── helpers ──────────────────────────────────────────────────────────────
+  function el(id) { return document.getElementById(id); }
+
+  function esc(value) {
+    return String(value === null || value === undefined ? "" : value)
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  function dash(value, digits) {
+    if (value === null || value === undefined || value === "") return "—";
+    return typeof value === "number" ? value.toFixed(digits === undefined ? 1 : digits) : esc(value);
+  }
+
+  function badge(kind, text) {
+    const cls = { ok: "b-ok", warn: "b-warn", err: "b-err" }[kind] || "b-neu";
+    return '<span class="badge ' + cls + '">' + esc(text) + "</span>";
+  }
+
+  function showBanner(on) { el("banner").style.display = on ? "block" : "none"; }
+
+  async function call(path, options) {
+    const response = await fetch(MASTER + path, Object.assign({ headers: headers }, options || {}));
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error("HTTP " + response.status + " " + text.slice(0, 200));
+    }
+    if (response.status === 204) return null;
+    const type = response.headers.get("content-type") || "";
+    return type.indexOf("application/json") >= 0 ? response.json() : response.text();
+  }
+
+  // ── submit ───────────────────────────────────────────────────────────────
+  el("submitForm").addEventListener("submit", async function (event) {
+    event.preventDefault();
+    const type = el("taskType").value;
+    const file = el("inputFile").files[0];
+    const msg = el("submitMsg");
+    if (!file) { msg.className = "msg err"; msg.textContent = "请选择输入 zip 文件"; return; }
+
+    const form = new FormData();
+    form.append("task_type", type);
+    form.append("file", file);
+
+    el("submitBtn").disabled = true;
+    msg.className = "msg muted";
+    msg.textContent = "提交中…";
+    try {
+      const data = await fetch(MASTER + "/jobs", { method: "POST", headers: headers, body: form })
+        .then(function (r) {
+          if (!r.ok) throw new Error("HTTP " + r.status);
+          return r.json();
+        });
+      msg.className = "msg ok";
+      msg.textContent = "已提交 " + data.job_id + " · " + data.total_tasks + " 个任务";
+      el("inputFile").value = "";
+      loadJobs();
+    } catch (error) {
+      msg.className = "msg err";
+      msg.textContent = "提交失败：" + error.message;
+    } finally {
+      el("submitBtn").disabled = false;
+    }
+  });
+
+  // ── jobs ─────────────────────────────────────────────────────────────────
+  function renderJobs(payload) {
+    const jobs = (payload && payload.jobs) || [];
+    lastData.jobs = jobs;
+    const body = el("jobsBody");
+    if (!jobs.length) {
+      body.innerHTML = '<tr><td colspan="5" class="muted">暂无任务</td></tr>';
+      return;
+    }
+    const order = ["queued", "running", "completed", "failed"];
+    const sorted = jobs.slice().sort(function (a, b) {
+      const rank = order.indexOf(b.status) - order.indexOf(a.status);
+      return rank !== 0 ? rank : (b.created_at || 0) - (a.created_at || 0);
+    });
+    body.innerHTML = sorted.map(function (job) {
+      const total = job.total_tasks || 0;
+      const done = job.done_tasks || 0;
+      const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+      let kind = "neu";
+      if (job.status === "completed") kind = "ok";
+      else if (job.status === "failed") kind = "err";
+      else if (job.status === "running") kind = "warn";
+      const link = job.status === "completed"
+        ? '<a href="' + MASTER + "/jobs/" + encodeURIComponent(job.job_id) + '/result">下载</a>'
+        : '<span class="muted">—</span>';
+      return "<tr>" +
+        '<td class="mono">' + esc(job.job_id) + "</td>" +
+        "<td>" + esc(job.task_type) + "</td>" +
+        '<td><div style="display:flex;align-items:center;gap:8px">' +
+          '<div class="bar"><i style="width:' + pct + '%"></i></div>' +
+          '<span class="mono">' + done + "/" + total + "</span></div></td>" +
+        "<td>" + badge(kind, job.status) + "</td>" +
+        "<td>" + link + "</td>" +
+        "</tr>";
+    }).join("");
+  }
+
+  async function loadJobs() {
+    try { renderJobs(await call("/jobs")); showBanner(false); }
+    catch (error) { showBanner(true); }
+  }
+
+  // ── workers ──────────────────────────────────────────────────────────────
+  function renderWorkers(payload) {
+    const workers = (payload && payload.workers) || [];
+    lastData.workers = workers;
+    const body = el("workersBody");
+    if (!workers.length) {
+      body.innerHTML = '<tr><td colspan="9" class="muted">暂无节点</td></tr>';
+      return;
+    }
+    body.innerHTML = workers.map(function (w) {
+      const conn = w.conn_state === "online" ? badge("ok", "online") : badge("err", "offline");
+      let contrib = badge("neu", w.contrib_state);
+      if (w.contrib_state === "available") contrib = badge("ok", "available");
+      else if (w.contrib_state === "paused") contrib = badge("warn", "paused");
+      else if (w.contrib_state === "draining") contrib = badge("warn", "draining");
+      const exec = w.exec_state === "busy" ? badge("warn", "busy") : badge("neu", "idle");
+      const gpu = w.gpu_name ? esc(w.gpu_name) : "—";
+      return "<tr>" +
+        '<td class="mono">' + esc(w.worker_id) + "</td>" +
+        "<td>" + esc(w.hostname) + "</td>" +
+        "<td>" + conn + "</td>" +
+        "<td>" + contrib + "</td>" +
+        "<td>" + exec + "</td>" +
+        '<td class="mono">' + w.free_slots + "/" + w.max_slots + "</td>" +
+        "<td>" + dash(w.cpu_pct) + "</td>" +
+        "<td>" + dash(w.gpu_pct) + "</td>" +
+        '<td class="mono">' + w.cpu_cores + "c / " + dash(w.ram_gb) + "GB / " + gpu + "</td>" +
+        "</tr>";
+    }).join("");
+  }
+
+  async function loadWorkers() {
+    try { renderWorkers(await call("/workers")); showBanner(false); }
+    catch (error) { showBanner(true); }
+  }
+
+  // ── metrics ──────────────────────────────────────────────────────────────
+  function renderMetrics(m) {
+    lastData.metrics = m;
+    el("kEta").textContent = m.eta_pool_pct === null || m.eta_pool_pct === undefined
+      ? "—" : Number(m.eta_pool_pct).toFixed(1) + "%";
+    el("kS").textContent = m.speedup_S === null || m.speedup_S === undefined
+      ? "—" : Number(m.speedup_S).toFixed(2) + "×";
+    el("kPool").textContent = m.p_pool ? Number(m.p_pool).toFixed(2) : "—";
+    el("kRecords").textContent = m.total_records === undefined ? "—" : m.total_records;
+
+    const perDevice = m.per_device_throughput || {};
+    const keys = Object.keys(perDevice).sort();
+    const body = el("metricsBody");
+    if (!keys.length) {
+      body.innerHTML = '<tr><td colspan="3" class="muted">暂无数据</td></tr>';
+    } else {
+      const peak = Math.max.apply(null, keys.map(function (k) { return perDevice[k]; })) || 1;
+      body.innerHTML = keys.map(function (k) {
+        const value = perDevice[k];
+        const width = Math.max(2, Math.round((value / peak) * 100));
+        return "<tr>" +
+          '<td class="mono">' + esc(k) + "</td>" +
+          '<td class="mono">' + Number(value).toFixed(3) + "</td>" +
+          '<td><div class="meter"><i style="width:' + width + '%"></i></div></td>' +
+          "</tr>";
+      }).join("");
     }
 
-    async function submitJob() {
-      const type = document.getElementById("taskType").value;
-      const file = document.getElementById("inputFile").files[0];
-      const msg  = document.getElementById("submitMsg");
-      if (!type || !file) { msg.textContent = "Select task type and file."; return; }
-      const fd = new FormData();
-      fd.append("file", file);
-      try {
-        const r = await fetch(`${MASTER_URL}/jobs?task_type=${encodeURIComponent(type)}`,
-          { method:"POST", headers:{"Authorization":`Bearer ${TOKEN}`}, body:fd });
-        const d = await r.json();
-        msg.textContent = `Submitted: ${d.job_id}`;
-        loadJobs();
-      } catch(e) { msg.textContent = "Error: " + e.message; }
+    const events = (m.node_events || []).slice().reverse();
+    const box = el("eventsBody");
+    if (!events.length) {
+      box.innerHTML = '<span class="muted">暂无事件</span>';
+    } else {
+      box.innerHTML = events.map(function (e) {
+        const when = e.ts ? new Date(e.ts * 1000).toLocaleTimeString() : "";
+        return "<div><span class=\"mono\">" + esc(when) + "</span> · " +
+               esc(e.worker_id) + " · <b>" + esc(e.event) + "</b></div>";
+      }).join("");
     }
+  }
 
-    async function loadJobs() {
-      try {
-        const jobs = await api("/jobs");
-        const tb   = document.getElementById("jobTable");
-        if (!jobs.length) { tb.innerHTML = `<tr><td colspan="5" style="color:var(--muted)">No jobs yet.</td></tr>`; return; }
-        tb.innerHTML = jobs.map(j => `
-          <tr>
-            <td style="font-family:monospace">${j.job_id}</td>
-            <td>${j.task_type}</td>
-            <td>${j.done_tasks}/${j.total_tasks}</td>
-            <td><span class="badge ${j.status==='completed'?'badge-ok':j.status==='failed'?'badge-err':'badge-warn'}">${j.status}</span></td>
-            <td>${j.status==='completed'?`<a href="${MASTER_URL}/jobs/${j.job_id}/result">Download</a>`:'—'}</td>
-          </tr>`).join("");
-      } catch(e) { document.getElementById("jobTable").innerHTML = `<tr><td colspan="5">${e.message}</td></tr>`; }
-    }
+  async function loadMetrics() {
+    try { renderMetrics(await call("/metrics/summary")); }
+    catch (error) { showBanner(true); }
+  }
 
-    async function loadWorkers() {
-      try {
-        const ws = await api("/workers");
-        const tb = document.getElementById("workerTable");
-        if (!ws.length) { tb.innerHTML = `<tr><td colspan="7" style="color:var(--muted)">No workers.</td></tr>`; return; }
-        tb.innerHTML = ws.map(w => `
-          <tr>
-            <td style="font-family:monospace">${w.worker_id}</td>
-            <td>${w.hostname}</td>
-            <td><span class="badge ${w.conn_state==='online'?'badge-ok':'badge-err'}">${w.conn_state}</span></td>
-            <td><span class="badge ${w.contrib==='available'?'badge-ok':w.contrib==='paused'?'badge-warn':'badge-err'}">${w.contrib}</span></td>
-            <td>${w.free_slots}</td>
-            <td>${w.cpu_pct!=null?w.cpu_pct.toFixed(1):'—'}</td>
-            <td>${w.gpu_pct!=null?w.gpu_pct.toFixed(1):'—'}</td>
-          </tr>`).join("");
-      } catch(e) { document.getElementById("workerTable").innerHTML = `<tr><td colspan="7">${e.message}</td></tr>`; }
-    }
+  // ── polling ──────────────────────────────────────────────────────────────
+  function startAll() {
+    if (timers.started) return;
+    timers.started = true;
+    loadJobs(); loadWorkers(); loadMetrics();
+    timers.jobs = setInterval(loadJobs, REQ.jobs);
+    timers.workers = setInterval(loadWorkers, REQ.workers);
+    timers.metrics = setInterval(loadMetrics, REQ.metrics);
+  }
 
-    async function loadMetrics() {
-      try {
-        const m = await api("/metrics/summary");
-        const p = document.getElementById("metricsPanel");
-        const eta = m.eta_pool_pct != null ? m.eta_pool_pct.toFixed(1)+"%" : "—";
-        const s   = m.speedup_S   != null ? m.speedup_S.toFixed(2)+"×"    : "—";
-        const devRows = Object.entries(m.per_device_throughput || {})
-          .map(([wid,tp]) => `<tr><td style="font-family:monospace">${wid}</td><td>${tp.toFixed(2)} units/s</td></tr>`).join("");
-        p.innerHTML = `
-          <strong>η_pool</strong> ${eta} &nbsp;|&nbsp; <strong>Speedup S</strong> ${s}<br/><br/>
-          <table><thead><tr><th>Worker</th><th>Throughput</th></tr></thead><tbody>${devRows||'<tr><td colspan="2">No data</td></tr>'}</tbody></table>`;
-      } catch(e) { document.getElementById("metricsPanel").textContent = e.message; }
-    }
+  function stopAll() {
+    if (!timers.started) return;
+    timers.started = false;
+    clearInterval(timers.jobs);
+    clearInterval(timers.workers);
+    clearInterval(timers.metrics);
+  }
 
-    function refresh() { loadJobs(); loadWorkers(); loadMetrics(); }
-    refresh();
-    setInterval(refresh, 5000);
-  </script>
+  document.addEventListener("visibilitychange", function () {
+    if (document.hidden) stopAll(); else startAll();
+  });
+
+  startAll();
+})();
+</script>
 </body>
 </html>
