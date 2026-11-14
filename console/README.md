@@ -19,12 +19,19 @@ console/
 | 分区 | 数据来源 | 轮询 | 内容 |
 |------|---------|------|------|
 | 提交任务 | `POST /jobs` | — | 任务类型下拉 + zip 文件选择，返回 job_id 与任务数 |
-| 任务列表 | `GET /jobs` | 1.5s | Job ID、类型、进度条（done/total）、状态徽章、完成后下载链接 |
+| 任务列表 | `GET /jobs` | 1.5s | Job ID、类型、进度条（done/total）、状态徽章、下载、暂停/恢复和删除 |
 | 节点 | `GET /workers` | 1s | ID、主机、连接/贡献/执行三态、槽位、CPU%、GPU%、真实能力 |
 | 池化指标 | `GET /metrics/summary` | 5s | η_pool、加速比 S、P_pool、成功任务数、各设备吞吐条形图 |
 | 节点事件 | 同上 `node_events` | 5s | 最近 20 条 join/pause/resume/timeout，按时间倒序 |
 
 ## 配置
+
+任务操作：`POST /jobs/{id}/pause` 暂停后续分片分配，正在执行的分片正常完成并保留进度；
+`POST /jobs/{id}/resume` 恢复分配。最后一个在途分片完成时，作业仍可正常进入完成状态。
+已完成或失败的任务不可暂停/恢复，接口返回 409。
+`DELETE /jobs/{id}` 移除列表记录及 Master 上该作业的输入和结果文件，页面操作前会确认。
+已下发分片会自然结束，迟到上传和提交不再写回该作业。历史成功工作量指标保留。
+这些操作仅影响所选作业，其他作业和 Worker 继续运行。
 
 - **API 基地址**：默认 `window.location.origin`（即由 Master 同源提供）。也可用查询参数覆盖并持久化：
   `http://127.0.0.1:8000/console?master=http://127.0.0.1:8000`

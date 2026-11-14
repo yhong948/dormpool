@@ -20,6 +20,10 @@
 .PARAMETER MaxSlots
     Concurrent tasks this node will accept, default 1.
 
+.PARAMETER Python
+    Python executable path or command. Defaults to .venv-gpu, .venv,
+    the active virtual environment, then python.exe on PATH.
+
 .PARAMETER DelayMs
     DORMPOOL_EXECUTOR_DELAY_MS — extra sleep after each image. Slows a task so
     pause/hot-join experiments have a visible window. Does not change output bytes.
@@ -41,7 +45,7 @@
 param(
     [string]$Master,
     [string]$WorkerId,
-    [int]$MaxSlots = 1,
+    [int]$MaxSlots = 10,
     [string]$Python,
     [int]$DelayMs = 0,
     [int]$ControlPort = 0,
@@ -52,13 +56,10 @@ $ErrorActionPreference = "Stop"
 
 $Root = Split-Path -Parent $PSScriptRoot
 Set-Location $Root
-if (-not $Python) {
-    $Python = Join-Path $Root '.venv-gpu\Scripts\python.exe'
-    if (-not (Test-Path $Python)) { $Python = Join-Path $Root '.venv\Scripts\python.exe' }
-}
-if (-not (Test-Path $Python)) { throw "Python environment missing: $Python" }
+. (Join-Path $PSScriptRoot 'python_runtime.ps1')
+$Python = Resolve-DormPoolPython -Root $Root -Python $Python -EnvironmentNames @('.venv-gpu', '.venv')
 $env:CUPY_CACHE_DIR = Join-Path $Root '._tmp\cupy-cache'
-$env:DORMPOOL_CONVNEXT_WEIGHTS = if ($env:DORMPOOL_CONVNEXT_WEIGHTS) { $env:DORMPOOL_CONVNEXT_WEIGHTS } else { Join-Path $Root 'data\convnext_small-0c510722.pth' }
+# Leave default model discovery to the workload; preserve explicit overrides.
 $env:DORMPOOL_CONVNEXT_DEVICE = 'cuda'
 Write-Host "Python  : $Python"
 

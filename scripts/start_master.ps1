@@ -17,6 +17,10 @@
 .PARAMETER Port
     TCP port, default 8000.
 
+.PARAMETER Python
+    Python executable path or command. Defaults to .venv, .venv-gpu,
+    the active virtual environment, then python.exe on PATH.
+
 .PARAMETER DataDir
     Master data root, default "data".
 
@@ -50,11 +54,8 @@ $ErrorActionPreference = "Stop"
 
 $Root = Split-Path -Parent $PSScriptRoot
 Set-Location $Root
-if (-not $Python) {
-    $Python = Join-Path $Root '.venv\Scripts\python.exe'
-    if (-not (Test-Path $Python)) { $Python = Join-Path $Root '.venv-gpu\Scripts\python.exe' }
-}
-if (-not (Test-Path $Python)) { throw "Python environment missing: $Python" }
+. (Join-Path $PSScriptRoot 'python_runtime.ps1')
+$Python = Resolve-DormPoolPython -Root $Root -Python $Python
 Write-Host "Python  : $Python"
 
 $LogDir = Join-Path $Root "logs"

@@ -24,6 +24,7 @@ import time, uuid
 class JobStatus(str, Enum):
     QUEUED    = "queued"
     RUNNING   = "running"
+    PAUSED    = "paused"
     COMPLETED = "completed"
     FAILED    = "failed"
 
@@ -156,6 +157,9 @@ class API:
     JOB_STATUS   = "GET  /jobs/{job_id}"
     JOB_RESULT   = "GET  /jobs/{job_id}/result"
     LIST_JOBS    = "GET  /jobs"
+    PAUSE_JOB    = "POST /jobs/{job_id}/pause"
+    RESUME_JOB   = "POST /jobs/{job_id}/resume"
+    DELETE_JOB   = "DELETE /jobs/{job_id}"
     LIST_WORKERS = "GET  /workers"
 
     # Metrics / benchmark

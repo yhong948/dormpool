@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import threading
 import zipfile
@@ -54,6 +55,7 @@ def _zip_info(name: str) -> zipfile.ZipInfo:
 class DataManager:
     def __init__(self):
         self._lock = threading.RLock()
+        self._deleted_jobs: set = set()
         os.makedirs(os.path.join(_data_root(), "inputs"), exist_ok=True)
         os.makedirs(os.path.join(_data_root(), "outputs"), exist_ok=True)
 
@@ -151,6 +153,8 @@ class DataManager:
     def save_task_output(self, job_id: str, task_id: str, data: bytes) -> str:
         """Store one task's result archive. Returns the ref key."""
         with self._lock:
+            if job_id in self._deleted_jobs:
+                raise ValueError("job deleted")
             folder = os.path.join(_data_root(), "outputs", job_id)
             os.makedirs(folder, exist_ok=True)
             path = os.path.join(folder, f"{task_id}.zip")
@@ -160,6 +164,8 @@ class DataManager:
 
     def save_task_output_from_file(self, job_id: str, task_id: str, src_path: str) -> str:
         with self._lock:
+            if job_id in self._deleted_jobs:
+                raise ValueError("job deleted")
             folder = os.path.join(_data_root(), "outputs", job_id)
             os.makedirs(folder, exist_ok=True)
             path = os.path.join(folder, f"{task_id}.zip")
@@ -167,6 +173,19 @@ class DataManager:
             return f"outputs/{job_id}/{task_id}.zip"
 
     # ── aggregation ──────────────────────────────────────────────────────────
+
+    def delete_job(self, job_id: str) -> None:
+        """Delete only this job's folders and reject any late worker uploads."""
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", job_id):
+            raise ValueError("invalid job id")
+        with self._lock:
+            folders = [self.resolve_path(f"{kind}/{job_id}") for kind in ("inputs", "outputs")]
+            if any(folder is None for folder in folders):
+                raise ValueError("invalid job path")
+            self._deleted_jobs.add(job_id)
+            for folder in folders:
+                if os.path.isdir(folder):
+                    shutil.rmtree(folder)
 
     def aggregate_job_output(self, job_id: str, task_ids: List[str]) -> Optional[str]:
         """Merge every succeeded task's manifest and thumbs into result.zip.

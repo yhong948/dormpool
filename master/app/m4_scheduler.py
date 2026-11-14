@@ -145,6 +145,22 @@ class TaskScheduler:
 
     # ── lease ────────────────────────────────────────────────────────────────
 
+    def set_job_paused(self, job_id: str, paused: bool) -> dict:
+        with self._lock:
+            return self._jobs.set_paused(job_id, paused)
+
+    def delete_job(self, job_id: str) -> None:
+        with self._lock:
+            if self._jobs.get_job(job_id) is None:
+                raise KeyError(job_id)
+            task_ids = {task.task_id for task in self._jobs.tasks_of(job_id)}
+            for record in self._attempts.values():
+                if record["task_id"] in task_ids and record["status"] == AttemptStatus.RUNNING.value:
+                    record.update(status=AttemptStatus.EXPIRED.value,
+                                  finished_at=time.time(), units_done=0,
+                                  error_msg="job deleted")
+            self._jobs.delete_job(job_id)
+
     def renew_lease(self, attempt_id: str) -> dict:
         with self._lock:
             record = self._attempts.get(attempt_id)

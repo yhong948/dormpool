@@ -97,10 +97,6 @@ class AgentRuntime:
 
         cfg = self.config
         cfg.prepare()
-        if cfg.max_slots != 1:
-            log.warning("resident Executor capacity is 1; requested max_slots=%s, using 1", cfg.max_slots)
-            cfg.max_slots = 1
-
         self.monitor = ResourceMonitor(cfg.max_slots)
         self.contrib = ContributionController(self.monitor)
         self.exec_mgr = ExecutionManager(cfg)

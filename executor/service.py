@@ -15,11 +15,7 @@ def emit(message):
 
 def initialize():
     start = time.perf_counter()
-    from executor.workload.image_thumb_gpu import gpu_summary
-    gpu = gpu_summary()
     supported = ["image_thumb"]
-    if gpu.get("available"):
-        supported.append("image_thumb_gpu")
     try:
         import torch
         torch.set_num_threads(max(1, int(os.environ.get("DORMPOOL_TORCH_THREADS", "2"))))
@@ -35,6 +31,12 @@ def initialize():
         supported.append("convnext_infer")
     except Exception as exc:
         convnext = {"available": False, "reason": str(exc)}
+    # On Windows, initialize PyTorch's CUDA libraries before CuPy can load
+    # libraries from a different CUDA toolkit into this process.
+    from executor.workload.image_thumb_gpu import gpu_summary
+    gpu = gpu_summary()
+    if gpu.get("available"):
+        supported.append("image_thumb_gpu")
     return {"type": "ready", "protocol": PROTOCOL_VERSION, "pid": os.getpid(),
             "supported_task_types": supported, "gpu": gpu, "convnext": convnext,
             "initialization_s": round(time.perf_counter() - start, 6)}

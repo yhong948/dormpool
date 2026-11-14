@@ -22,6 +22,10 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
+from shared.windows_runtime import use_native_windows_platform  # noqa: E402
+
+use_native_windows_platform()
+
 from worker.agent.w1_runtime import main  # noqa: E402
 
 if __name__ == "__main__":

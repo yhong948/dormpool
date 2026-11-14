@@ -41,6 +41,10 @@
          font-size:13px;font-weight:600;cursor:pointer;font-family:inherit}
   button:hover{filter:brightness(1.06)}
   button:disabled{opacity:.55;cursor:default}
+  .table-scroll{overflow-x:auto}
+  .job-actions{display:flex;gap:6px;white-space:nowrap}
+  .job-actions button{padding:5px 10px;font-size:12px}
+  .job-actions .delete-job{color:var(--err);background:var(--errbg);border:1px solid #f3c9c9}
   .bar{position:relative;height:7px;background:#eceef1;border-radius:4px;overflow:hidden;min-width:90px}
   .bar > i{position:absolute;inset:0 auto 0 0;background:var(--accent);border-radius:4px}
   .meter{height:7px;background:#eceef1;border-radius:4px;overflow:hidden;min-width:80px}
@@ -85,10 +89,14 @@
 
   <section>
     <h2>任务列表</h2>
+    <div class="table-scroll">
     <table>
-      <thead><tr><th>Job</th><th>类型</th><th>进度</th><th>状态</th><th>结果</th></tr></thead>
-      <tbody id="jobsBody"><tr><td colspan="5" class="muted">加载中…</td></tr></tbody>
+      <thead><tr><th>Job</th><th>类型</th><th>进度</th><th>状态</th><th>结果</th><th>操作</th></tr></thead>
+      <tbody id="jobsBody"><tr><td colspan="6" class="muted">加载中…</td></tr></tbody>
     </table>
+    </div>
+    <div class="msg muted">暂停后，正在执行的分片会完成，剩余分片等待恢复。删除会移除任务及其在 Master 上的输入和结果文件。</div>
+    <div class="msg" id="jobMsg" role="status" aria-live="polite"></div>
   </section>
 
   <section>
@@ -237,15 +245,18 @@
   });
 
   // ── jobs ─────────────────────────────────────────────────────────────────
+  const pendingJobActions = new Set();
+  let jobsRevision = 0;
+
   function renderJobs(payload) {
     const jobs = (payload && payload.jobs) || [];
     lastData.jobs = jobs;
     const body = el("jobsBody");
     if (!jobs.length) {
-      body.innerHTML = '<tr><td colspan="5" class="muted">暂无任务</td></tr>';
+      body.innerHTML = '<tr><td colspan="6" class="muted">暂无任务</td></tr>';
       return;
     }
-    const order = ["queued", "running", "completed", "failed"];
+    const order = ["completed", "failed", "paused", "queued", "running"];
     const sorted = jobs.slice().sort(function (a, b) {
       const rank = order.indexOf(b.status) - order.indexOf(a.status);
       return rank !== 0 ? rank : (b.created_at || 0) - (a.created_at || 0);
@@ -258,6 +269,16 @@
       if (job.status === "completed") kind = "ok";
       else if (job.status === "failed") kind = "err";
       else if (job.status === "running") kind = "warn";
+      else if (job.status === "paused") kind = "warn";
+      const disabled = pendingJobActions.has(job.job_id) ? " disabled" : "";
+      const jobAttr = ' data-job-id="' + esc(job.job_id) + '"';
+      let actions = "";
+      if (job.status === "queued" || job.status === "running") {
+        actions += '<button type="button" data-job-action="pause"' + jobAttr + disabled + '>暂停</button>';
+      } else if (job.status === "paused") {
+        actions += '<button type="button" data-job-action="resume"' + jobAttr + disabled + '>恢复</button>';
+      }
+      actions += '<button type="button" class="delete-job" data-job-action="delete"' + jobAttr + disabled + '>删除</button>';
       const link = job.status === "completed"
         ? '<a href="' + MASTER + "/jobs/" + encodeURIComponent(job.job_id) + '/result">下载</a>'
         : '<span class="muted">—</span>';
@@ -267,16 +288,51 @@
         '<td><div style="display:flex;align-items:center;gap:8px">' +
           '<div class="bar"><i style="width:' + pct + '%"></i></div>' +
           '<span class="mono">' + done + "/" + total + "</span></div></td>" +
-        "<td>" + badge(kind, job.status) + "</td>" +
+        "<td>" + badge(kind, job.status === "paused" ? "已暂停" : job.status) + "</td>" +
         "<td>" + link + "</td>" +
+        '<td><div class="job-actions">' + actions + '</div></td>' +
         "</tr>";
     }).join("");
   }
 
   async function loadJobs() {
-    try { renderJobs(await call("/jobs")); reportOk(); }
+    const revision = jobsRevision;
+    try {
+      const payload = await call("/jobs");
+      if (revision === jobsRevision) renderJobs(payload);
+      reportOk();
+    }
     catch (error) { reportFail(error); }
   }
+
+  el("jobsBody").addEventListener("click", async function (event) {
+    const button = event.target.closest("button[data-job-action]");
+    if (!button || button.disabled) return;
+    const jobId = button.dataset.jobId;
+    const action = button.dataset.jobAction;
+    if (pendingJobActions.has(jobId)) return;
+    if (action === "delete" && !window.confirm("删除任务 " + jobId + "？其输入和结果文件也会删除，无法恢复。")) return;
+    const msg = el("jobMsg");
+    pendingJobActions.add(jobId);
+    renderJobs({ jobs: lastData.jobs });
+    msg.className = "msg muted";
+    msg.textContent = "正在处理 " + jobId + "…";
+    try {
+      const path = "/jobs/" + encodeURIComponent(jobId);
+      await call(action === "delete" ? path : path + "/" + action,
+                 { method: action === "delete" ? "DELETE" : "POST" });
+      jobsRevision += 1;
+      msg.className = "msg ok";
+      msg.textContent = ({ pause: "已暂停", resume: "已恢复", delete: "已删除" })[action] + " " + jobId;
+    } catch (error) {
+      msg.className = "msg err";
+      msg.textContent = "操作失败：" + error.message;
+    } finally {
+      pendingJobActions.delete(jobId);
+      await loadJobs();
+      renderJobs({ jobs: lastData.jobs });
+    }
+  });
 
   // ── workers ──────────────────────────────────────────────────────────────
   function renderWorkers(payload) {
