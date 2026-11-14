@@ -3,9 +3,7 @@ master/app/m1_api.py  —  M1 API Gateway
 ========================================
 Owner: Person A.
 
-The only surface Worker and user ever talk to. Auth is a single Bearer token
-from DORMPOOL_TOKEN; /ping is deliberately exempt so readiness can be probed
-before any credential exchange.
+The HTTP surface for Workers and users. Requests do not require credentials.
 
 Endpoint map (paths come from shared.contracts.API):
   GET  /ping                                  no auth
@@ -30,7 +28,7 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Response, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Response, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from starlette.concurrency import run_in_threadpool
 
@@ -42,7 +40,7 @@ from shared.contracts import (
     WorkerExecState,
     LEASE_DURATION,
 )
-from master.app.c3_validation import validate_result, ValidationError
+from master.app.c3_validation import validate_result, ValidationError, VALIDATORS
 from master.app.m2_registry import WorkerRegistry, bind_hooks as bind_registry_hooks
 from master.app.m3_job import JobManager, bind_hooks as bind_job_hooks, shard_size
 from master.app.m4_scheduler import TaskScheduler, bind_hooks as bind_scheduler_hooks
@@ -127,21 +125,6 @@ SCHED.start()
 
 app = FastAPI(title="DormPool Master", version="0.1.0")
 
-# ── Auth ─────────────────────────────────────────────────────────────────────
-
-TOKEN = os.environ.get("DORMPOOL_TOKEN", "dev-token")
-
-
-def verify_token(authorization: Optional[str] = Header(None)) -> None:
-    if not TOKEN:
-        return                      # auth disabled on purpose (empty token)
-    if authorization != f"Bearer {TOKEN}":
-        raise HTTPException(status_code=401, detail="Unauthorized")
-
-
-AUTH = [Depends(verify_token)]
-
-
 # ── Health ───────────────────────────────────────────────────────────────────
 
 @app.get("/ping")
@@ -151,7 +134,7 @@ def ping() -> dict:
 
 # ── Jobs ─────────────────────────────────────────────────────────────────────
 
-@app.post("/jobs", dependencies=AUTH)
+@app.post("/jobs")
 async def submit_job(task_type: str = Form(...), file: UploadFile = File(...)):
     try:
         payload = await file.read()
@@ -190,16 +173,16 @@ async def submit_job(task_type: str = Form(...), file: UploadFile = File(...)):
 
 
 def _known_task_types() -> set:
-    from executor.run import TASK_REGISTRY
-    return set(TASK_REGISTRY.keys())
+    # The Master validates results; it does not import Worker execution code.
+    return set(VALIDATORS)
 
 
-@app.get("/jobs", dependencies=AUTH)
+@app.get("/jobs")
 def list_jobs():
     return {"jobs": JOBS.list_jobs()}
 
 
-@app.get("/jobs/{job_id}", dependencies=AUTH)
+@app.get("/jobs/{job_id}")
 def job_status(job_id: str):
     view = JOBS.job_view(job_id)
     if view is None:
@@ -207,7 +190,7 @@ def job_status(job_id: str):
     return view
 
 
-@app.get("/jobs/{job_id}/result", dependencies=AUTH)
+@app.get("/jobs/{job_id}/result")
 def job_result(job_id: str):
     job = JOBS.get_job(job_id)
     if job is None:
@@ -289,7 +272,7 @@ def list_workers():
 
 # ── Data ─────────────────────────────────────────────────────────────────────
 
-@app.get("/data/{ref:path}", dependencies=AUTH)
+@app.get("/data/{ref:path}")
 def fetch_data(ref: str):
     path = DATA.resolve_path(ref)
     if path is None or not os.path.isfile(path):
@@ -297,7 +280,7 @@ def fetch_data(ref: str):
     return FileResponse(path, media_type="application/octet-stream")
 
 
-@app.post("/data/upload/{job_id}/{task_id}", dependencies=AUTH)
+@app.post("/data/upload/{job_id}/{task_id}")
 async def upload_output(job_id: str, task_id: str, file: UploadFile = File(...)):
     payload = await file.read()
     if not payload:
@@ -311,12 +294,12 @@ async def upload_output(job_id: str, task_id: str, file: UploadFile = File(...))
 
 # ── Attempts ─────────────────────────────────────────────────────────────────
 
-@app.post("/attempts/{attempt_id}/renew", dependencies=AUTH)
+@app.post("/attempts/{attempt_id}/renew")
 def renew_lease(attempt_id: str):
     return SCHED.renew_lease(attempt_id)
 
 
-@app.post("/attempts/{attempt_id}/commit", dependencies=AUTH)
+@app.post("/attempts/{attempt_id}/commit")
 def commit_result(attempt_id: str, body: dict):
     return SCHED.commit_result(
         attempt_id=attempt_id,
@@ -328,7 +311,7 @@ def commit_result(attempt_id: str, body: dict):
 
 # ── Metrics ──────────────────────────────────────────────────────────────────
 
-@app.get("/metrics/summary", dependencies=AUTH)
+@app.get("/metrics/summary")
 def metrics_summary():
     return METRICS.summary()
 

@@ -34,9 +34,36 @@ GPU 依赖清单为 `requirements-gpu.txt`；普通 Master 使用 `requirements.
 .\.venv-gpu\Scripts\python.exe tests\e2e_convnext.py
 ```
 
-该测试启动临时 Master 和一个 Worker，经 HTTP 提交两个分片，验证 CUDA 日志、
+该测试默认用 `.venv` 启动临时 Master，用当前 `.venv-gpu` 解释器启动 Worker；
+可传 `--master-python <解释器路径>` 覆盖 Master 的解释器。
+经 HTTP 提交两个分片，验证 CUDA 日志、
 结果汇总、有效工作量和指标，并停止测试进程；证据保存在 `._tmp/convnext-e2e-*`。
 它验证单机链路，不代表多物理设备性能或多机加速效果。
 
 当前推理每个 Task 启动一个子进程并加载一次权重。小分片的模型加载开销可能明显；
 吞吐评测时应记录分片大小及端到端耗时。
+
+## 本地两个终端启动
+
+两个终端都先进入仓库根目录。终端 A：
+
+```powershell
+.\scripts\start_master.ps1 -Bind 127.0.0.1 -Port 8000 -DataDir data/master-local -ShardSize 1 -Foreground
+```
+
+终端 B：
+
+```powershell
+.\scripts\start_worker.ps1 -Master http://127.0.0.1:8000 -WorkerId worker-local-gpu -MaxSlots 1 -Foreground
+```
+
+终端 C 生成样本并提交（API 返回 `job_id`）：
+
+```powershell
+.\.venv-gpu\Scripts\python.exe executor/gen_sample.py --count 2 --out data/convnext-input.zip
+curl.exe -sS -F "task_type=convnext_infer" -F "file=@data/convnext-input.zip" http://127.0.0.1:8000/jobs
+```
+
+可在 `http://127.0.0.1:8000/console` 查询 Job 状态并下载结果。
+终端 B 应记录 `supported` 包含 `convnext_infer`，每个执行器应记录 `device=cuda`。
+Master 不需要权重文件，也无需加载 PyTorch。

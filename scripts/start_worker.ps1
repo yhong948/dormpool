@@ -4,9 +4,7 @@
     Start one DormPool Worker agent on this machine.
 
 .DESCRIPTION
-    Joins this machine to a pool as a single node. Reads the shared token from
-    .dormpool-token unless one is passed, so a single file copy is enough to
-    configure a second laptop.
+    Joins this machine to a pool as a single node.
 
     Worker data is isolated per WORKER_ID (data/worker_data/<id>), so two
     workers can run on one machine for local testing.
@@ -21,9 +19,6 @@
 
 .PARAMETER MaxSlots
     Concurrent tasks this node will accept, default 1.
-
-.PARAMETER Token
-    Bearer token. Defaults to $env:DORMPOOL_TOKEN or .dormpool-token.
 
 .PARAMETER DelayMs
     DORMPOOL_EXECUTOR_DELAY_MS — extra sleep after each image. Slows a task so
@@ -46,9 +41,8 @@
 param(
     [string]$Master,
     [string]$WorkerId,
-    [int]$MaxSlots = 1,
+    [int]$MaxSlots = 100,
     [string]$Python,
-    [string]$Token,
     [int]$DelayMs = 0,
     [int]$ControlPort = 0,
     [switch]$Foreground
@@ -80,17 +74,6 @@ if ($Master -notmatch '^https?://') {
 }
 $Master = $Master.TrimEnd('/')
 
-# ── token ────────────────────────────────────────────────────────────────────
-$TokenFile = Join-Path $Root ".dormpool-token"
-if (-not $Token) { $Token = $env:DORMPOOL_TOKEN }
-if (-not $Token -and (Test-Path $TokenFile)) {
-    $Token = (Get-Content -Path $TokenFile -Raw).Trim()
-}
-if (-not $Token) {
-    Write-Error "No token. Pass -Token, set `$env:DORMPOOL_TOKEN, or copy .dormpool-token from the Master machine."
-    exit 1
-}
-
 # ── worker id ────────────────────────────────────────────────────────────────
 if (-not $WorkerId) {
     $WorkerId = "{0}-{1}" -f $env:COMPUTERNAME, (-join ((48..57) + (97..122) | Get-Random -Count 4 | ForEach-Object { [char]$_ }))
@@ -110,7 +93,6 @@ try {
 
 # ── launch ───────────────────────────────────────────────────────────────────
 $env:MASTER_URL     = $Master
-$env:DORMPOOL_TOKEN = $Token
 $env:WORKER_ID      = $WorkerId
 $env:WORKER_DATA    = $workerData
 $env:MAX_SLOTS      = "$MaxSlots"
@@ -154,8 +136,7 @@ if ($proc.HasExited) {
 }
 
 try {
-    $hdr = @{ Authorization = "Bearer $Token" }
-    $w = Invoke-RestMethod -Uri "$Master/workers" -Headers $hdr -TimeoutSec 5
+    $w = Invoke-RestMethod -Uri "$Master/workers" -TimeoutSec 5
     $me = $w.workers | Where-Object { $_.worker_id -eq $WorkerId } | Select-Object -First 1
     if ($me) {
         Write-Host ("Registered: {0} / {1} / {2}  cpu={3}c ram={4}GB gpu={5}" -f `

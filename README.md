@@ -18,14 +18,12 @@
 pip install -r requirements.txt
 
 # 1. 启动 Master（终端 1）
-$env:DORMPOOL_TOKEN = "dev-token"
 $env:DORMPOOL_DATA  = "data"
 $env:SHARD_SIZE     = "1"
 python -m uvicorn master.main:app --host 127.0.0.1 --port 8000
 
 # 2. 启动 Worker A（终端 2）
 $env:MASTER_URL     = "http://127.0.0.1:8000"
-$env:DORMPOOL_TOKEN = "dev-token"
 $env:MAX_SLOTS      = "1"
 $env:WORKER_ID      = "worker-A"
 $env:WORKER_DATA    = "data/worker_data/worker-A"
@@ -47,11 +45,11 @@ python worker/main.py --headless
 pip install -r requirements.txt
 
 # 1. 启动 Master（终端 1）
-export DORMPOOL_TOKEN=dev-token DORMPOOL_DATA=data SHARD_SIZE=1
+export DORMPOOL_DATA=data SHARD_SIZE=1
 python -m uvicorn master.main:app --host 127.0.0.1 --port 8000
 
 # 2. 启动两个 Worker（终端 2、3）
-export MASTER_URL=http://127.0.0.1:8000 DORMPOOL_TOKEN=dev-token MAX_SLOTS=1
+export MASTER_URL=http://127.0.0.1:8000 MAX_SLOTS=1
 # 终端 2:
 WORKER_ID=worker-A WORKER_DATA=data/worker_data/worker-A python worker/main.py --headless
 # 终端 3:
@@ -88,7 +86,7 @@ dormpool/
 │   ├── main.py                入口
 │   ├── README.md
 │   └── app/
-│       ├── m1_api.py          M1 API Gateway：路由、鉴权、请求编排、组合根
+│       ├── m1_api.py          M1 API Gateway：路由、请求编排、组合根
 │       ├── m2_registry.py     M2 Worker Registry：注册、心跳、三维状态、离线判定
 │       ├── m3_job.py          M3 Job Manager：创建、分片、进度、终态、账本
 │       ├── m4_scheduler.py    M4 Task Scheduler：原子分配、租约、校验提交、回收
@@ -212,7 +210,6 @@ S      = P_pool / max(P_i)            相对最强单机的加速比
 
 | 变量 | 默认 | 说明 |
 |------|------|------|
-| `DORMPOOL_TOKEN` | `dev-token` | Bearer token；留空则关闭鉴权 |
 | `DORMPOOL_DATA` | `data` | 数据根目录 |
 | `SHARD_SIZE` | `3` | 每个 Task 处理几张图 |
 
@@ -221,7 +218,6 @@ S      = P_pool / max(P_i)            相对最强单机的加速比
 | 变量 | 默认 | 说明 |
 |------|------|------|
 | `MASTER_URL` | `http://127.0.0.1:8000` | Master 地址 |
-| `DORMPOOL_TOKEN` | `dev-token` | 须与 Master 一致 |
 | `WORKER_ID` | 主机名 + uuid 短码 | 固定后重连被识别为同一节点 |
 | `MAX_SLOTS` | `2` | 并发任务上限 |
 | `WORKER_DATA` | `worker_data` | 本地目录，每个 Worker 必须不同 |
@@ -252,7 +248,7 @@ cpu=16 ram=31.78GB gpu=NVIDIA GeForce RTX 4060 Laptop GPU score=1|1252217.207
 ## 安全边界
 
 - Worker 只主动出站连接 Master，不开放任何入站端口
-- 所有业务请求须带 `Authorization: Bearer <token>`；`/ping` 和 `/console` 例外
+- 所有接口直接访问，无需凭证。
 - Executor 只执行 `TASK_REGISTRY` 里注册的预定义类型，**没有**任意代码执行入口
 - `/data/{ref}` 拒绝绝对路径与 `..`，任何 ref 都无法逃出数据根目录
 - 所有进程只监听 `127.0.0.1`，不绑 `0.0.0.0`

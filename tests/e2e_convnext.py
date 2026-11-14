@@ -4,6 +4,7 @@ Run with .venv-gpu/Scripts/python.exe tests/e2e_convnext.py.
 Uses a temporary loopback server, not the team's running Master.
 """
 import io
+import argparse
 import json
 import os
 from pathlib import Path
@@ -15,6 +16,10 @@ from e2e_local import Harness, http_json, http_bytes, multipart, REPO_ROOT
 
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--master-python", default=str(REPO_ROOT / ".venv" / "Scripts" / "python.exe"))
+    args = parser.parse_args()
+    os.environ["DORMPOOL_MASTER_PYTHON"] = str(Path(args.master_python).resolve())
     cache = REPO_ROOT / "._tmp" / "cupy-cache"
     os.environ.setdefault("CUPY_CACHE_DIR", str(cache))
     os.environ["DORMPOOL_CONVNEXT_DEVICE"] = "cuda"

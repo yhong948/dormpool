@@ -16,7 +16,7 @@ master/
 ├── README.md
 └── app/
     ├── __init__.py
-    ├── m1_api.py        M1 API Gateway — 路由、鉴权、请求编排、组合根
+    ├── m1_api.py        M1 API Gateway — 路由、请求编排、组合根
     ├── m2_registry.py   M2 Worker Registry — 注册、心跳、三维状态、离线判定
     ├── m3_job.py        M3 Job Manager — Job 创建、分片、进度、终态、账本
     ├── m4_scheduler.py  M4 Task Scheduler — 原子分配、租约、校验提交、回收
@@ -95,19 +95,19 @@ POST /attempts/{id}/commit {output_ref, units_done, error_msg}
 | 方法 | 路径 | 鉴权 | 说明 |
 |------|------|------|------|
 | GET | `/ping` | 否 | `{"ok": true, "ts": ...}` |
-| POST | `/jobs` | 是 | multipart：`task_type`、`file` |
-| GET | `/jobs` | 是 | `{"jobs": [...]}` |
-| GET | `/jobs/{id}` | 是 | Job 字段 + `tasks[]`，每个 task 内含 `attempts[]` |
-| GET | `/jobs/{id}/result` | 是 | 聚合后的 zip |
-| POST | `/workers/register` | 是 | WorkerCapability |
-| POST | `/workers/{id}/heartbeat` | 是 | WorkerHeartbeat |
-| POST | `/workers/{id}/claim` | 是 | 有任务返回 200 + 载荷，无任务 204 |
-| GET | `/workers` | 是 | `{"workers": [...]}`，含能力字段 |
-| GET | `/data/{ref}` | 是 | 分片/结果文件，拒绝路径穿越 |
-| POST | `/data/upload/{job_id}/{task_id}` | 是 | multipart 字段名 `file` |
-| POST | `/attempts/{id}/renew` | 是 | 续租 |
-| POST | `/attempts/{id}/commit` | 是 | 提交结果 |
-| GET | `/metrics/summary` | 是 | 指标汇总 |
+| POST | `/jobs` | 否 | multipart：`task_type`、`file` |
+| GET | `/jobs` | 否 | `{"jobs": [...]}` |
+| GET | `/jobs/{id}` | 否 | Job 字段 + `tasks[]`，每个 task 内含 `attempts[]` |
+| GET | `/jobs/{id}/result` | 否 | 聚合后的 zip |
+| POST | `/workers/register` | 否 | WorkerCapability |
+| POST | `/workers/{id}/heartbeat` | 否 | WorkerHeartbeat |
+| POST | `/workers/{id}/claim` | 否 | 有任务返回 200 + 载荷，无任务 204 |
+| GET | `/workers` | 否 | `{"workers": [...]}`，含能力字段 |
+| GET | `/data/{ref}` | 否 | 分片/结果文件，拒绝路径穿越 |
+| POST | `/data/upload/{job_id}/{task_id}` | 否 | multipart 字段名 `file` |
+| POST | `/attempts/{id}/renew` | 否 | 续租 |
+| POST | `/attempts/{id}/commit` | 否 | 提交结果 |
+| GET | `/metrics/summary` | 否 | 指标汇总 |
 | GET | `/console` | 否 | Team Console 页面 |
 
 ## 启动
@@ -115,7 +115,6 @@ POST /attempts/{id}/commit {output_ref, units_done, error_msg}
 **Windows（PowerShell）**
 
 ```powershell
-$env:DORMPOOL_TOKEN = "dev-token"
 $env:DORMPOOL_DATA  = "data"       # 数据根目录
 $env:SHARD_SIZE     = "3"          # 每个 Task 处理几张图（门禁用 1）
 python -m uvicorn master.main:app --host 127.0.0.1 --port 8000
@@ -124,7 +123,6 @@ python -m uvicorn master.main:app --host 127.0.0.1 --port 8000
 **Ubuntu / Linux（bash）**
 
 ```bash
-export DORMPOOL_TOKEN=dev-token
 export DORMPOOL_DATA=data          # 数据根目录
 export SHARD_SIZE=3                # 每个 Task 处理几张图（门禁用 1）
 python -m uvicorn master.main:app --host 127.0.0.1 --port 8000

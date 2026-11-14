@@ -34,8 +34,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-TOKEN = os.environ.get("DORMPOOL_TOKEN", "dev-token")
-HEADERS = {"Authorization": f"Bearer {TOKEN}"}
+HEADERS = {}
 
 
 # ── tiny HTTP helpers (stdlib only, so the harness has no deps) ──────────────
@@ -114,13 +113,13 @@ class Harness:
     def start_master(self) -> None:
         env = dict(os.environ)
         env.update({
-            "DORMPOOL_TOKEN": TOKEN,
+
             "DORMPOOL_DATA": str(self.data_dir),
             "PYTHONUNBUFFERED": "1",
         })
         log = open(self.work_dir / "master.log", "wb")
         proc = subprocess.Popen(
-            [sys.executable, "-m", "uvicorn", "master.main:app",
+            [os.environ.get("DORMPOOL_MASTER_PYTHON", sys.executable), "-m", "uvicorn", "master.main:app",
              "--host", "127.0.0.1", "--port", str(self.port)],
             cwd=str(REPO_ROOT), env=env, stdout=log, stderr=subprocess.STDOUT,
         )
@@ -133,7 +132,7 @@ class Harness:
         env = dict(os.environ)
         env.update({
             "MASTER_URL": self.base,
-            "DORMPOOL_TOKEN": TOKEN,
+
             "WORKER_ID": name,
             "WORKER_DATA": str(self.worker_dirs / name),
             "MAX_SLOTS": "1",

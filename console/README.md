@@ -28,7 +28,6 @@ console/
 
 - **API 基地址**：默认 `window.location.origin`（即由 Master 同源提供）。也可用查询参数覆盖并持久化：
   `http://127.0.0.1:8000/console?master=http://127.0.0.1:8000`
-- **Token**：`localStorage.setItem("dormpool_token", "dev-token")`，请求时带 `Authorization: Bearer`
 
 ## 状态徽章语义
 
@@ -53,5 +52,4 @@ console/
 | 现象 | 原因 | 处置 |
 |------|------|------|
 | `/console` 404 | Master 从错误 cwd 解析相对路径 | Master 用 `Path(__file__).resolve().parents[2] / "console/index.html"` |
-| 页面能开但全空 | token 与 Master 的 `DORMPOOL_TOKEN` 不一致 → 401 | 在浏览器 localStorage 里设置同一个 token |
 | 打开是静态文件但请求失败 | 用 `file://` 打开，跨域到 Master | 通过 `http://<master>/console` 访问 |

@@ -55,7 +55,17 @@ class ExecutionManager:
             daemon=True,
             name=f"task-{task.get('task_id', 'unknown')}",
         )
-        thread.start()
+        # Reserve synchronously: the pull loop can immediately claim the next
+        # free slot without sleeping for the execution thread to catch up.
+        if agent is not None:
+            agent.monitor.slot_acquire()
+        try:
+            thread.start()
+        except Exception:
+            if agent is not None:
+                agent.monitor.slot_release()
+                agent._work_event.set()
+            raise
 
     def running_task_ids(self) -> List[str]:
         with self._lock:
@@ -71,14 +81,12 @@ class ExecutionManager:
         task_id = str(task.get("task_id") or "unknown")
         attempt_id = str(attempt.get("attempt_id") or "unknown")
 
-        self.cfg.data_dir.mkdir(parents=True, exist_ok=True)
-        work_dir = self.cfg.data_dir / task_id
-        work_dir.mkdir(parents=True, exist_ok=True)
-
-        input_path = work_dir / "input.zip"
-        output_path = work_dir / "output.zip"
-
         try:
+            self.cfg.data_dir.mkdir(parents=True, exist_ok=True)
+            work_dir = self.cfg.data_dir / task_id
+            work_dir.mkdir(parents=True, exist_ok=True)
+            input_path = work_dir / "input.zip"
+            output_path = work_dir / "output.zip"
             self._run_guarded(task, attempt, agent, input_path, output_path)
         except Exception as exc:                       # pragma: no cover - belt and braces
             log.exception("unhandled error in task %s", task_id)
@@ -92,6 +100,7 @@ class ExecutionManager:
                 self._running.pop(attempt_id, None)
             if agent is not None:
                 agent.monitor.slot_release()
+                agent._work_event.set()
 
     def _run_guarded(self, task: dict, attempt: dict, agent,
                      input_path, output_path) -> None:
@@ -104,8 +113,6 @@ class ExecutionManager:
         if agent is None:
             log.error("no agent bound; cannot execute task %s", task_id)
             return
-
-        agent.monitor.slot_acquire()
 
         # 1. fetch the shard
         if not agent.connector.fetch_input(input_ref, str(input_path)):

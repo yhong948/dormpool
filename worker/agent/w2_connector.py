@@ -50,9 +50,7 @@ class MasterConnector:
         # multipart uploads (requests would keep "application/json" and never
         # generate a boundary, so FastAPI answers 422). JSON calls set it
         # explicitly in _request().
-        self._headers = {"Authorization": f"Bearer {config.token}"}
         self._session = requests.Session()
-        self._session.headers.update(self._headers)
 
     # ── transport ────────────────────────────────────────────────────────────
 

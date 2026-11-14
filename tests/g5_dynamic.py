@@ -34,8 +34,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-TOKEN = os.environ.get("DORMPOOL_TOKEN", "dev-token")
-HEADERS = {"Authorization": f"Bearer {TOKEN}"}
+HEADERS = {}
 
 
 def call(url, method="GET", body=None, headers=None, timeout=15.0):
@@ -87,7 +86,7 @@ class Env:
         self.data = work_dir / "data"
 
     def start_master(self):
-        env = dict(os.environ, DORMPOOL_TOKEN=TOKEN,
+        env = dict(os.environ,
                    DORMPOOL_DATA=str(self.data), PYTHONUNBUFFERED="1",
                    SHARD_SIZE="1")
         log = open(self.work_dir / "master.log", "wb")
@@ -99,7 +98,7 @@ class Env:
             raise RuntimeError("master failed to start")
 
     def start_worker(self, name, control_port=None):
-        env = dict(os.environ, MASTER_URL=self.base, DORMPOOL_TOKEN=TOKEN,
+        env = dict(os.environ, MASTER_URL=self.base,
                    WORKER_ID=name, WORKER_DATA=str(self.work_dir / name),
                    MAX_SLOTS="1", WORKER_NO_REPL="1", PYTHONUNBUFFERED="1",
                    DORMPOOL_EXECUTOR_DELAY_MS=str(self.delay_ms))

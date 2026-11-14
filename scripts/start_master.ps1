@@ -4,12 +4,9 @@
     Start the DormPool Master (and its console) on this machine.
 
 .DESCRIPTION
-    Resolves the shared token, picks a bind address, preflights the port, and
+    Picks a bind address, preflights the port, and
     launches uvicorn in a background process. Logs and the PID file go to logs/.
 
-    The token is stored in .dormpool-token at the repository root. Run this
-    script once, then copy that file to every Worker machine (or pass -Token
-    explicitly to start_worker.ps1) so both sides agree.
 
 .PARAMETER Bind
     Address to listen on. Resolution order: -Bind, $env:MASTER_BIND, the first
@@ -19,10 +16,6 @@
 
 .PARAMETER Port
     TCP port, default 8000.
-
-.PARAMETER Token
-    Bearer token. Resolution order: -Token, $env:DORMPOOL_TOKEN,
-    .dormpool-token, then a freshly generated one written to that file.
 
 .PARAMETER DataDir
     Master data root, default "data".
@@ -46,7 +39,7 @@
 param(
     [string]$Bind,
     [int]$Port = 8000,
-    [string]$Token,
+    [string]$Python,
     [string]$DataDir = "data",
     [int]$ShardSize = 1,
     [switch]$KillIfBusy,
@@ -57,24 +50,15 @@ $ErrorActionPreference = "Stop"
 
 $Root = Split-Path -Parent $PSScriptRoot
 Set-Location $Root
+if (-not $Python) {
+    $Python = Join-Path $Root '.venv\Scripts\python.exe'
+    if (-not (Test-Path $Python)) { $Python = Join-Path $Root '.venv-gpu\Scripts\python.exe' }
+}
+if (-not (Test-Path $Python)) { throw "Python environment missing: $Python" }
+Write-Host "Python  : $Python"
 
 $LogDir = Join-Path $Root "logs"
 if (-not (Test-Path $LogDir)) { New-Item -ItemType Directory -Path $LogDir | Out-Null }
-
-# ── token ────────────────────────────────────────────────────────────────────
-$TokenFile = Join-Path $Root ".dormpool-token"
-if (-not $Token) { $Token = $env:DORMPOOL_TOKEN }
-if (-not $Token -and (Test-Path $TokenFile)) {
-    $Token = (Get-Content -Path $TokenFile -Raw).Trim()
-}
-if (-not $Token) {
-    $bytes = New-Object byte[] 24
-    $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
-    $rng.GetBytes($bytes)
-    $Token = [Convert]::ToBase64String($bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_')
-    Set-Content -Path $TokenFile -Value $Token -NoNewline -Encoding ascii
-    Write-Host "Generated a new token -> $TokenFile" -ForegroundColor Yellow
-}
 
 # ── bind address ─────────────────────────────────────────────────────────────
 if (-not $Bind) { $Bind = $env:MASTER_BIND }
@@ -132,7 +116,6 @@ if ($busy) {
 if (-not (Test-Path $DataDir)) { New-Item -ItemType Directory -Path $DataDir | Out-Null }
 
 # ── launch ───────────────────────────────────────────────────────────────────
-$env:DORMPOOL_TOKEN = $Token
 $env:DORMPOOL_DATA  = $DataDir
 $env:SHARD_SIZE     = "$ShardSize"
 $env:MASTER_BIND    = $Bind
@@ -145,17 +128,16 @@ $pidFile = Join-Path $LogDir "master.pid"
 Write-Host ""
 Write-Host "  Master  : http://${Bind}:${Port}"        -ForegroundColor Cyan
 Write-Host "  Console : http://${Bind}:${Port}/console" -ForegroundColor Cyan
-Write-Host "  Token   : $Token"                        -ForegroundColor Cyan
 Write-Host "  Data    : $DataDir"                      -ForegroundColor Cyan
 if (-not $Foreground) { Write-Host "  Logs    : $errLog" -ForegroundColor Cyan }
 Write-Host ""
 
 if ($Foreground) {
-    python -m uvicorn master.main:app --host $Bind --port $Port
+    & $Python -m uvicorn master.main:app --host $Bind --port $Port
     exit $LASTEXITCODE
 }
 
-$proc = Start-Process python `
+$proc = Start-Process -FilePath $Python `
     -ArgumentList @("-m", "uvicorn", "master.main:app", "--host", $Bind, "--port", $Port) `
     -WorkingDirectory $Root `
     -RedirectStandardOutput $outLog `

@@ -4,7 +4,7 @@ worker/main.py  —  Worker Agent entry point
 Owner: Person B.
 
     cd f:/dormpool/dormpool
-    MASTER_URL=http://127.0.0.1:8000 DORMPOOL_TOKEN=dev-token \
+    MASTER_URL=http://127.0.0.1:8000 \
     WORKER_ID=worker-A WORKER_DATA=data/worker_data/worker-A MAX_SLOTS=1 \
     python worker/main.py --headless
 

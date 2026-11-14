@@ -129,8 +129,7 @@
   const override = params.get("master");
   if (override) localStorage.setItem("dormpool_master", override);
   const MASTER = (localStorage.getItem("dormpool_master") || "").replace(/\/+$/, "");
-  const TOKEN = localStorage.getItem("dormpool_token") || "dev-token";
-  const headers = { "Authorization": "Bearer " + TOKEN };
+  const headers = {};
 
   document.getElementById("endpoint").textContent = "API: " + (MASTER || window.location.origin);
 

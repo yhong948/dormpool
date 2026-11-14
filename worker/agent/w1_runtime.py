@@ -27,7 +27,6 @@ import platform
 import signal
 import sys
 import threading
-import time
 import uuid
 from pathlib import Path
 
@@ -35,17 +34,17 @@ from shared.contracts import WorkerContribState
 
 log = logging.getLogger("w1")
 
-POLL_IDLE = 5.0
+POLL_IDLE = 0.25  # only back off when the Master has no queued work
 POLL_PAUSED = 10.0
+POLL_ERROR = 5.0
 
 
 class AgentConfig:
     """Environment-driven configuration. Every value has a working default."""
 
-    def __init__(self, master_url=None, token=None, worker_id=None,
+    def __init__(self, master_url=None, worker_id=None,
                  max_slots=None, data_dir=None, control_port=None):
         self.master_url = master_url or os.environ.get("MASTER_URL", "http://127.0.0.1:8000")
-        self.token = token if token is not None else os.environ.get("DORMPOOL_TOKEN", "dev-token")
         self.max_slots = int(max_slots if max_slots is not None
                              else os.environ.get("MAX_SLOTS", "2"))
         self.data_dir = Path(data_dir or os.environ.get("WORKER_DATA", "worker_data"))
@@ -78,6 +77,7 @@ class AgentRuntime:
         self._running = True
         self._draining = False
         self._stop_event = threading.Event()
+        self._work_event = threading.Event()
 
         self.monitor = None
         self.contrib = None
@@ -129,12 +129,14 @@ class AgentRuntime:
     def pause(self) -> None:
         self._draining = True
         self.contrib.pause()
+        self._work_event.set()
         log.info("contrib_state -> draining/paused")
         self._push_state_now()
 
     def resume(self) -> None:
         self._draining = False
         self.contrib.resume()
+        self._work_event.set()
         log.info("contrib_state -> available")
         self._push_state_now()
 
@@ -163,6 +165,7 @@ class AgentRuntime:
         log.info("shutdown requested — finishing in-flight work")
         self._running = False
         self._stop_event.set()
+        self._work_event.set()
 
     def is_running(self) -> bool:
         return self._running
@@ -171,27 +174,29 @@ class AgentRuntime:
 
     def _task_loop(self) -> None:
         while self._running:
+            # Clear before checking capacity so a concurrent completion cannot
+            # be lost between the capacity check and wait().
+            self._work_event.clear()
             try:
                 if not self.contrib.can_accept():
                     state = self.contrib.state()
-                    self._stop_event.wait(
+                    self._work_event.wait(
                         POLL_IDLE if state == WorkerContribState.AVAILABLE else POLL_PAUSED
                     )
                     continue
 
                 claimed = self.connector.claim_task()
                 if not claimed:
-                    self._stop_event.wait(POLL_IDLE)
+                    self._work_event.wait(POLL_IDLE)
                     continue
 
                 task = claimed.get("task") or {}
                 attempt = claimed.get("attempt") or {}
                 log.info("claimed %s (%s)", task.get("task_id"), task.get("task_type"))
                 self.exec_mgr.run_task(task, attempt, agent=self)
-                time.sleep(0.2)                 # let the slot counter tick over
             except Exception as exc:
                 log.warning("task loop error: %s", exc)
-                self._stop_event.wait(POLL_IDLE)
+                self._stop_event.wait(POLL_ERROR)
 
 
 def _install_signal_handlers(agent: AgentRuntime) -> None:
