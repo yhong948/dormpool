@@ -19,7 +19,7 @@
 | `executor/service.py` / `serve()` | stdin 循环同步执行完整 handler，再读取下一个请求 | 需要读取请求与执行任务分离 |
 | `executor/workload/convnext_infer.py` / `run()` | 顺序完成 ZIP 读取、Pillow/NumPy 预处理、整片堆成 batch、推理、CPU 回传和 ZIP 写出 | 没有显式 Stream，也没有独立的 GPU microbatch 上限 |
 | `worker/agent/w1_runtime.py` | 强制单槽位的代码目前已被注释 | 增加槽位只会增加在途任务，不能绕过上述两处串行限制 |
-| `scripts/start_worker.ps1` | `MaxSlots` 当前默认 100 | 不能把 100 个在途 Attempt 解读为 100 路 GPU 推理 |
+| `start/start_worker.ps1` | `MaxSlots` 当前默认 100 | 不能把 100 个在途 Attempt 解读为 100 路 GPU 推理 |
 
 现有 `DORMPOOL_TASK_TIMEOUT` 在获得 `_rpc` 锁后等待响应时才生效，不覆盖等待该锁的时间。多路改造需要单独记录排队耗时并限定总等待时间。
 
