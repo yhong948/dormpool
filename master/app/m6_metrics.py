@@ -180,6 +180,26 @@ class MetricsCollector:
         with self._lock:
             return deepcopy(max(self._pool_jobs.values(),key=lambda x:x['finished_at'])) if self._pool_jobs else None
 
+    def auto_baselines(self):
+        """Per-worker average throughput from solo (single-worker) completed jobs.
+
+        A solo job is any completed pool_job whose workers list has exactly one entry.
+        Averaging multiple solo runs gives a stable P_i baseline for each machine.
+        Returns {worker_id: avg_P_imgs_per_s}.
+        """
+        with self._lock:
+            jobs = list(self._pool_jobs.values())
+        per_worker = {}
+        for job in jobs:
+            workers = job.get('workers', [])
+            if len(workers) != 1:
+                continue
+            wid = workers[0]
+            p = job.get('p_pool', 0.0)
+            if p > 0:
+                per_worker.setdefault(wid, []).append(p)
+        return {wid: sum(vals) / len(vals) for wid, vals in per_worker.items()}
+
     def create_benchmark(self, participants, baseline_jobs, pool_job, warmup_jobs, name='', observed_jobs=()):
         with self._lock:
             if (not isinstance(participants,list) or not all(isinstance(w,str) and w for w in participants)
@@ -298,17 +318,54 @@ class MetricsCollector:
         contributions = {wid:units/elapsed for wid,units in live.get('per_worker_units',{}).items()} if elapsed>0 else {}
         resource = frozen.get('resources',{}) if frozen else self.resource_window(
             live.get('workers',[]),live.get('created_at',now),now)
-        return dict(benchmark_choices=choices,generated_at=now,
-                    live={**live,'elapsed_s':elapsed,'throughput':live_rate,'per_worker_rate':contributions,
-                          'unit':'verified images/s','resources':resource},benchmark=benchmark,
-                    p_pool=frozen['p_pool'] if frozen else None,
-                    p_pool_source='pool_wall_clock' if frozen else 'no_completed_selected_job',pool_measurement=frozen,
-                    per_device_throughput=contributions, # compatibility; NOT independent baselines
-                    eta_pool_pct=benchmark['eta_pool_pct'] if benchmark else None,
-                    speedup_S=benchmark['speedup_S'] if benchmark else None,
-                    total_records=live.get('succeeded_attempts',0),node_events=events,
-                    avg_cpu_pct={wid:v['avg_cpu_pct'] for wid,v in resource.items()},
-                    avg_gpu_pct={wid:v['avg_gpu_pct'] for wid,v in resource.items()})
+
+        # Auto baselines: average P_i from solo completed jobs per worker.
+        ab = self.auto_baselines()
+
+        # Auto S and eta for the current job's worker set vs solo baselines.
+        if frozen:
+            current_p = frozen.get('p_pool')
+            current_workers = frozen.get('workers', [])
+        else:
+            current_p = live_rate
+            current_workers = list(live.get('per_worker_units', {}).keys()) or list(live.get('workers', []))
+
+        auto_S = None
+        auto_eta = None
+        auto_p_sum = None
+        auto_p_max = None
+        if current_p and current_workers:
+            covered = [w for w in current_workers if w in ab]
+            if covered:
+                auto_p_max = max(ab[w] for w in covered)
+                auto_p_sum = sum(ab[w] for w in covered)
+                if auto_p_max > 0:
+                    auto_S = current_p / auto_p_max
+                if auto_p_sum > 0:
+                    auto_eta = current_p / auto_p_sum * 100
+
+        return dict(
+            benchmark_choices=choices,
+            generated_at=now,
+            live={**live,'elapsed_s':elapsed,'throughput':live_rate,'per_worker_rate':contributions,
+                  'unit':'verified images/s','resources':resource},
+            benchmark=benchmark,
+            p_pool=frozen['p_pool'] if frozen else None,
+            p_pool_source='pool_wall_clock' if frozen else ('live' if live_rate else 'no_completed_selected_job'),
+            pool_measurement=frozen,
+            per_device_throughput=contributions,
+            auto_baselines=ab,
+            auto_speedup_S=auto_S,
+            auto_eta_pct=auto_eta,
+            auto_p_sum=auto_p_sum,
+            auto_p_max=auto_p_max,
+            eta_pool_pct=benchmark['eta_pool_pct'] if benchmark else None,
+            speedup_S=benchmark['speedup_S'] if benchmark else None,
+            total_records=live.get('succeeded_attempts',0),
+            node_events=events,
+            avg_cpu_pct={wid:v['avg_cpu_pct'] for wid,v in resource.items()},
+            avg_gpu_pct={wid:v['avg_gpu_pct'] for wid,v in resource.items()},
+        )
 
 
 metrics = MetricsCollector()
