@@ -110,7 +110,19 @@
       <div class="kpi"><span>本 Job 已确认图片</span><b id="liveUnits">—</b></div>
       <div class="kpi"><span>测量窗口（秒）</span><b id="liveSeconds">—</b></div>
     </div>
-    <p class="muted">实时吞吐 = 本 Job 已验证且唯一确认的图片数 ÷ 提交以来的时间；完整 Job 包含结果汇总时间。运行数据不作为独立单机基线。</p>
+    <p class="muted">实时吞吐 = 本 Job 已验证且唯一确认的图片数 ÷ 提交以来的时间；完整 Job 包含结果汇总时间。</p>
+    <h2>自动基线 &amp; 加速比</h2>
+    <p class="muted" id="autoBaselineNote">单机独跑完成后自动记录平均吞吐作为基线；接入多台后自动计算 S 与 η。</p>
+    <div class="grid3">
+      <div class="kpi"><span>自动加速比 S（当前 Job）</span><b id="autoS">—</b></div>
+      <div class="kpi"><span>自动 η_pool（当前 Job）</span><b id="autoEta">—</b></div>
+      <div class="kpi"><span>P_pool（已验证图片/秒）</span><b id="autoPPool">—</b></div>
+    </div>
+    <table>
+      <thead><tr><th>Worker</th><th>单机基线 P_i（图片/秒）</th><th>基线 job 数</th></tr></thead>
+      <tbody id="autoBaselineBody"><tr><td colspan="3" class="muted">暂无单机完成记录</td></tr></tbody>
+    </table>
+    <p class="muted">S = P_pool / max(P_i)；η = P_pool / Σ P_i × 100%。基线为该 worker 单独跑完的所有 job 的平均吞吐。多台接入时自动计算，单台时 S 应为 1×。</p>
     <h2>正式评测 · Measurement &amp; Fairness</h2>
     <select id="benchmarkSelect"><option value="">最新评测记录</option></select>
     <p id="benchmarkStatus" class="muted">尚未建立独立单机基线和池测量，S、η 暂不可计算。</p>
@@ -365,6 +377,44 @@
       return '<option value="' + esc(b.benchmark_id) + '">' + esc(b.name || b.benchmark_id) + '</option>';
     }).join('');
     el("benchmarkSelect").value = selection;
+    // ── auto baselines & auto S/eta ──────────────────────────────────────────
+    const ab = m.auto_baselines || {};
+    const abKeys = Object.keys(ab).sort();
+    const autoS = m.auto_speedup_S;
+    const autoEta = m.auto_eta_pct;
+    const autoPPool = m.p_pool;
+    el("autoS").textContent = autoS !== null && autoS !== undefined ? Number(autoS).toFixed(2)+'×' : '—';
+    el("autoEta").textContent = autoEta !== null && autoEta !== undefined ? Number(autoEta).toFixed(1)+'%' : '—';
+    el("autoPPool").textContent = autoPPool !== null && autoPPool !== undefined ? Number(autoPPool).toFixed(2) : '—';
+
+    // Count how many solo jobs contributed to each worker's baseline
+    const soloJobs = {};
+    (m.pool_measurement ? [] : []).forEach(function() {});
+    // Derive job count per worker from auto_baselines presence (server sends avg, not list)
+    // Show workers with baselines, mark multi-machine jobs
+    const liveWorkers = Object.keys((live.per_worker_rate) || {});
+    const workerCount = liveWorkers.length;
+    if (workerCount > 1) {
+      el("autoBaselineNote").textContent = '已检测到 ' + workerCount + ' 台设备接入。S = P_pool / max(P_i)，η = P_pool / ΣP_i × 100%。';
+    } else if (workerCount === 1) {
+      el("autoBaselineNote").textContent = '当前仅 1 台设备运行，单机基线将自动记录，作为后续多机对比参考。';
+    } else {
+      el("autoBaselineNote").textContent = '单机独跑完成后自动记录平均吞吐作为基线；接入多台后自动计算 S 与 η。';
+    }
+
+    if (!abKeys.length) {
+      el("autoBaselineBody").innerHTML = '<tr><td colspan="3" class="muted">暂无单机完成记录，请先用单台 worker 完成至少一个 Job</td></tr>';
+    } else {
+      el("autoBaselineBody").innerHTML = abKeys.map(function(wid) {
+        const isInCurrentJob = liveWorkers.indexOf(wid) >= 0;
+        return '<tr' + (isInCurrentJob ? ' style="font-weight:600"' : '') + '>' +
+          '<td class="mono">' + esc(wid) + (isInCurrentJob ? ' <span class="badge b-ok">当前</span>' : '') + '</td>' +
+          '<td class="mono">' + Number(ab[wid]).toFixed(3) + '</td>' +
+          '<td class="muted">自动平均</td>' +
+          '</tr>';
+      }).join('');
+    }
+
     el("kEta").textContent = benchmark ? Number(benchmark.eta_pool_pct).toFixed(1)+'%' : '—';
     el("kS").textContent = benchmark ? Number(benchmark.speedup_S).toFixed(2)+'×' : '—';
     el("kPool").textContent = benchmark ? Number(benchmark.p_pool).toFixed(2) : '—';
