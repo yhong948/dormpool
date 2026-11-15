@@ -453,7 +453,8 @@
   const params = new URLSearchParams(window.location.search);
   const override = params.get("master");
   if (override) localStorage.setItem("dormpool_master", override);
-  const MASTER = (localStorage.getItem("dormpool_master") || "").replace(/\/+$/, "");
+  const appPrefix = (window.location.pathname.match(/^\/apps\/[^/]+(?=\/|$)/i) || [""])[0];
+  const MASTER = (localStorage.getItem("dormpool_master") || appPrefix || "").replace(/\/+$/, "");
   const headers = {};
 
   document.getElementById("endpoint").textContent = "API: " + (MASTER || window.location.origin);

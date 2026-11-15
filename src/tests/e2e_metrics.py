@@ -8,12 +8,12 @@ import tempfile
 import time
 
 from dormpool.src.tests.e2e_local import Harness, http_json, REPO_ROOT
-sys.path.insert(0,str(REPO_ROOT/'scripts'))
+sys.path.insert(0,str(REPO_ROOT/'start'))
 from measure_metrics import measure
 
 
 def main():
-    os.environ['DORMPOOL_MASTER_PYTHON']=str(REPO_ROOT/'.venv/Scripts/python.exe')
+    os.environ.setdefault('DORMPOOL_MASTER_PYTHON', sys.executable)
     os.environ['CUPY_CACHE_DIR']=str(REPO_ROOT/'._tmp/cupy-cache')
     os.environ['SHARD_SIZE']='1'
     root = REPO_ROOT/'._tmp'

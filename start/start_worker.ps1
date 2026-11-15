@@ -31,11 +31,11 @@
     Run in this window (interactive REPL available) instead of backgrounding.
 
 .EXAMPLE
-    .\scripts\start_worker.ps1
+    .\start\start_worker.ps1
 .EXAMPLE
-    .\scripts\start_worker.ps1 -Master http://10.4.139.66:8000 -WorkerId worker-B
+    .\start\start_worker.ps1 -Master http://10.4.139.66:8000 -WorkerId worker-B
 .EXAMPLE
-    .\scripts\start_worker.ps1 -WorkerId worker-A -DelayMs 800 -ControlPort 8122
+    .\start\start_worker.ps1 -WorkerId worker-A -DelayMs 800 -ControlPort 8122
 #>
 [CmdletBinding()]
 param(
@@ -52,8 +52,16 @@ $ErrorActionPreference = "Stop"
 
 $Root = Split-Path -Parent $PSScriptRoot
 Set-Location $Root
+$WorkerEntry = Join-Path $Root 'src\worker\main.py'
+if (-not (Test-Path $WorkerEntry)) {
+    throw "Worker entrypoint missing: $WorkerEntry (run this script from the updated src-layout checkout)"
+}
 . (Join-Path $PSScriptRoot 'python_runtime.ps1')
 $Python = Resolve-DormPoolPython -Root $Root -Python $Python -EnvironmentNames @('.venv-gpu', '.venv')
+$ProjectParent = Split-Path -Parent $Root
+$pathParts = @($ProjectParent)
+if ($env:PYTHONPATH) { $pathParts += $env:PYTHONPATH }
+$env:PYTHONPATH = ($pathParts -join [IO.Path]::PathSeparator)
 $env:CUPY_CACHE_DIR = Join-Path $Root '._tmp\cupy-cache'
 # Leave default model discovery to the workload: models/convnext_small-0c510722.pth
 # is the canonical location. An explicit environment override still wins.
@@ -113,19 +121,19 @@ if ($DelayMs -gt 0)     { Write-Host "  Delay   : $DelayMs ms/image" -Foreground
 Write-Host ""
 
 if ($Foreground) {
-    & $Python worker/main.py
+    & $Python $WorkerEntry
     exit $LASTEXITCODE
 }
 
 $proc = Start-Process -FilePath $Python `
-    -ArgumentList @("worker/main.py", "--headless") `
+    -ArgumentList @($WorkerEntry, "--headless") `
     -WorkingDirectory $Root `
     -RedirectStandardOutput $outLog `
     -RedirectStandardError $errLog `
     -NoNewWindow -PassThru
 
 $proc.Id | Set-Content -Path $pidFile -Encoding ascii
-Write-Host "Started Worker as PID $($proc.Id)  (stop: .\scripts\stop.ps1 -WorkerId $WorkerId)"
+Write-Host "Started Worker as PID $($proc.Id)  (stop: .\start\stop.ps1 -WorkerId $WorkerId)"
 
 Start-Sleep -Seconds 3
 if ($proc.HasExited) {

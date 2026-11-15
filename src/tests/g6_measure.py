@@ -10,7 +10,7 @@ import sys
 import tempfile
 
 from dormpool.src.tests.e2e_local import Harness, http_json, REPO_ROOT
-sys.path.insert(0,str(REPO_ROOT/'scripts'))
+sys.path.insert(0,str(REPO_ROOT/'start'))
 from measure_metrics import measure
 
 

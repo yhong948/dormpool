@@ -58,7 +58,9 @@ GET /ping 探活，失败则指数退避重试（2→4→8…→60s，不退出�
 | `WORKER_NO_REPL` | `0` | `1` 跳过交互式 REPL（CI / 门禁必须开） |
 | `DORMPOOL_EXECUTOR_DELAY_MS` | `0` | 每处理一张图后额外 sleep，仅用于拉长任务窗口，不影响输出字节 |
 
-命令行：`python src/worker/main.py [--headless] [--master URL] [--worker-id ID] [--max-slots N] [--control-port P]`
+命令行：`python src/worker/main.py --master "http://你的master ip:8000" [--headless] [--worker-id ID] [--max-slots N] [--control-port P]`
+
+请将 `你的master ip` 替换为实际地址：单机使用 `127.0.0.1`，多机使用 Master 监听的局域网 IP，并按实际情况调整端口。显式指定 `--master` 可覆盖已有的 `MASTER_URL` 环境变量。
 
 ## 算力嗅探（W3）
 

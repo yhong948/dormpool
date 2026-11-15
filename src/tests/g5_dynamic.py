@@ -30,9 +30,11 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
+REPO_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_PARENT = REPO_ROOT.parent
+for _path in (PROJECT_PARENT, REPO_ROOT):
+    if str(_path) not in sys.path:
+        sys.path.insert(0, str(_path))
 
 HEADERS = {}
 
@@ -87,25 +89,26 @@ class Env:
 
     def start_master(self):
         env = dict(os.environ,
+                   PYTHONPATH=str(PROJECT_PARENT) + os.pathsep + os.environ.get("PYTHONPATH", ""),
                    DORMPOOL_DATA=str(self.data), PYTHONUNBUFFERED="1",
                    SHARD_SIZE="1")
         log = open(self.work_dir / "master.log", "wb")
         self.procs["master"] = subprocess.Popen(
-            [sys.executable, "-m", "uvicorn", "master.main:app",
+            [sys.executable, "-m", "uvicorn", "src.master.main:app",
              "--host", "127.0.0.1", "--port", str(self.port)],
             cwd=str(REPO_ROOT), env=env, stdout=log, stderr=subprocess.STDOUT)
         if not wait_port(self.port):
             raise RuntimeError("master failed to start")
 
     def start_worker(self, name, control_port=None):
-        env = dict(os.environ, MASTER_URL=self.base,
+        env = dict(os.environ, PYTHONPATH=str(PROJECT_PARENT) + os.pathsep + os.environ.get("PYTHONPATH", ""), MASTER_URL=self.base,
                    WORKER_ID=name, WORKER_DATA=str(self.work_dir / name),
                    MAX_SLOTS="1", WORKER_NO_REPL="1", PYTHONUNBUFFERED="1",
                    DORMPOOL_EXECUTOR_DELAY_MS=str(self.delay_ms))
         if control_port:
             env["WORKER_CONTROL_PORT"] = str(control_port)
         log = open(self.work_dir / f"{name}.log", "ab")
-        proc = subprocess.Popen([sys.executable, "worker/main.py", "--headless"],
+        proc = subprocess.Popen([sys.executable, "src/worker/main.py", "--headless"],
                                 cwd=str(REPO_ROOT), env=env, stdout=log,
                                 stderr=subprocess.STDOUT)
         self.procs[name] = proc
@@ -203,7 +206,8 @@ def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=8200)
     ap.add_argument("--images", type=int, default=12)
-    ap.add_argument("--delay-ms", type=int, default=800)
+    ap.add_argument("--delay-ms", type=int, default=1500,
+                    help="per-image delay used to make pause/kill windows deterministic")
     ap.add_argument("--work-dir", default=None)
     args = ap.parse_args(argv)
 

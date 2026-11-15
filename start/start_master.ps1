@@ -33,11 +33,11 @@
     console and Ctrl+C stops it.
 
 .EXAMPLE
-    .\scripts\start_master.ps1
+    .\start\start_master.ps1
 .EXAMPLE
-    .\scripts\start_master.ps1 -Bind 10.4.139.66 -Port 8000
+    .\start\start_master.ps1 -Bind 10.4.139.66 -Port 8000
 .EXAMPLE
-    .\scripts\start_master.ps1 -Foreground
+    .\start\start_master.ps1 -Foreground
 #>
 [CmdletBinding()]
 param(
@@ -56,6 +56,10 @@ $Root = Split-Path -Parent $PSScriptRoot
 Set-Location $Root
 . (Join-Path $PSScriptRoot 'python_runtime.ps1')
 $Python = Resolve-DormPoolPython -Root $Root -Python $Python
+$ProjectParent = Split-Path -Parent $Root
+$pathParts = @($ProjectParent)
+if ($env:PYTHONPATH) { $pathParts += $env:PYTHONPATH }
+$env:PYTHONPATH = ($pathParts -join [IO.Path]::PathSeparator)
 Write-Host "Python  : $Python"
 
 $LogDir = Join-Path $Root "logs"
@@ -101,13 +105,13 @@ if ($busy) {
         Write-Host "  PID $pid_  :  $cmd" -ForegroundColor Red
         Write-Host ""
         Write-Host "  Option 1 (recommended): pass -KillIfBusy to stop it automatically:" -ForegroundColor Yellow
-        Write-Host "    .\scripts\start_master.ps1 -KillIfBusy" -ForegroundColor Cyan
+        Write-Host "    .\start\start_master.ps1 -KillIfBusy" -ForegroundColor Cyan
         Write-Host ""
         Write-Host "  Option 2: stop it manually, then re-run:" -ForegroundColor Yellow
         Write-Host ("    Stop-Process -Id " + $pid_ + " -Force") -ForegroundColor Cyan
         Write-Host ""
         Write-Host "  Option 3: use a different port (update Worker and browser too):" -ForegroundColor Yellow
-        Write-Host "    .\scripts\start_master.ps1 -Port 8001" -ForegroundColor Cyan
+        Write-Host "    .\start\start_master.ps1 -Port 8001" -ForegroundColor Cyan
         Write-Host ""
         exit 1
     }
@@ -117,7 +121,7 @@ if ($busy) {
 if (-not (Test-Path $DataDir)) { New-Item -ItemType Directory -Path $DataDir | Out-Null }
 
 # ── launch ───────────────────────────────────────────────────────────────────
-$env:DORMPOOL_DATA  = $DataDir
+$env:DORMPOOL_DATA  = [IO.Path]::GetFullPath($DataDir)
 $env:SHARD_SIZE     = "$ShardSize"
 $env:MASTER_BIND    = $Bind
 $env:MASTER_PORT    = "$Port"
@@ -134,19 +138,19 @@ if (-not $Foreground) { Write-Host "  Logs    : $errLog" -ForegroundColor Cyan }
 Write-Host ""
 
 if ($Foreground) {
-    & $Python -m uvicorn master.main:app --host $Bind --port $Port
+    & $Python -m uvicorn src.master.main:app --host $Bind --port $Port
     exit $LASTEXITCODE
 }
 
 $proc = Start-Process -FilePath $Python `
-    -ArgumentList @("-m", "uvicorn", "master.main:app", "--host", $Bind, "--port", $Port) `
+    -ArgumentList @("-m", "uvicorn", "src.master.main:app", "--host", $Bind, "--port", $Port) `
     -WorkingDirectory $Root `
     -RedirectStandardOutput $outLog `
     -RedirectStandardError $errLog `
     -NoNewWindow -PassThru
 
 $proc.Id | Set-Content -Path $pidFile -Encoding ascii
-Write-Host "Started Master as PID $($proc.Id)  (stop: .\scripts\stop.ps1)"
+Write-Host "Started Master as PID $($proc.Id)  (stop: .\start\stop.ps1)"
 
 Start-Sleep -Seconds 2
 if ($proc.HasExited) {

@@ -28,6 +28,16 @@ class MetricsCollector:
                                     if r.get('measurements') and r.get('p_pool') is not None}
             except (ValueError,KeyError,TypeError) as exc:
                 logging.getLogger('metrics').warning('cannot load benchmark reports: %s',exc)
+        self._last_report_created_at = max(
+            (float(r.get('created_at', 0) or 0) for r in self._benchmarks.values()),
+            default=0.0,
+        )
+
+    def _next_report_timestamp_locked(self):
+        """Return an ordering-safe timestamp even on coarse system clocks."""
+        now = time.time()
+        self._last_report_created_at = max(now, self._last_report_created_at + 1e-6)
+        return self._last_report_created_at
 
     def register_job(self, job_id, **metadata):
         with self._lock:
@@ -147,9 +157,11 @@ class MetricsCollector:
             warnings.append('处理时间包含重试，图片数仅计唯一成功结果。')
         if run.get('profile_changed'):
             warnings.append('运行期间设备配置发生变化。')
+        report_created_at = (self._next_report_timestamp_locked()
+                             if created_at is None else created_at)
         return dict(benchmark_id=benchmark_id or 'auto-' + uuid.uuid4().hex[:8],
                     name='单机运行测评' if len(devices) == 1 else '多 Worker 运行测评',
-                    created_at=time.time() if created_at is None else created_at,
+                    created_at=report_created_at,
                     status='needs_review' if warnings else 'recorded', warnings=warnings,
                     participants=list(devices), device_metrics=devices,
                     per_device_throughput=rates, p_pool=run['p_pool'],
@@ -273,7 +285,8 @@ class MetricsCollector:
             eta, speedup = pool['p_pool']/p_sum*100, pool['p_pool']/p_max
             if eta>100:
                 warnings.append('efficiency exceeds 100%; recheck baselines, batching, load and variance')
-            report = dict(benchmark_id='bench-'+uuid.uuid4().hex[:8],name=name,created_at=time.time(),
+            report = dict(benchmark_id='bench-'+uuid.uuid4().hex[:8],name=name,
+                          created_at=self._next_report_timestamp_locked(),
                           status='needs_review' if warnings else 'ready',warnings=warnings,
                           participants=participants,per_device_throughput=per_device,p_pool=pool['p_pool'],
                           eta_pool_pct=eta,speedup_S=speedup,p_sum=p_sum,p_max=p_max,

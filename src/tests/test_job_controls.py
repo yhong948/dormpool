@@ -14,7 +14,7 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 import zipfile
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 from dormpool.src.master.app import m3_job
@@ -124,7 +124,7 @@ class JobControlHTTPTests(unittest.TestCase):
         cls.base = f'http://127.0.0.1:{port}'
         cls.log = (cls.data_root / 'master.log').open('w')
         cls.process = subprocess.Popen(
-            [sys.executable, '-m', 'uvicorn', 'master.main:app', '--host', '127.0.0.1', '--port', str(port)],
+            [sys.executable, '-m', 'uvicorn', 'src.master.main:app', '--host', '127.0.0.1', '--port', str(port)],
             cwd=ROOT, env={**os.environ, 'DORMPOOL_DATA': str(cls.data_root), 'SHARD_SIZE': '1'},
             stdout=cls.log, stderr=subprocess.STDOUT,
             creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))

@@ -241,13 +241,17 @@ python -c "import torch; print('CUDA available:', torch.cuda.is_available())"
 dormpool/models/convnext_small-0c510722.pth
 ```
 
-如果该文件不存在，Worker 启动时会自动从 PyTorch Hub 下载（需要联网，约 200MB）。如需离线部署，提前下载后放到上述路径即可。
+Worker 不会在任务执行时下载模型。文件缺失时，Worker 仍可注册并执行 CPU 工作负载，
+但会拒绝 `convnext_infer` 任务；请在启动前将权重放到上述路径，或设置
+`DORMPOOL_CONVNEXT_WEIGHTS` 指向绝对路径。
 
 ---
 
 ## 7. Windows 一键启动
 
 所有脚本均在 `start/` 目录下，使用 PowerShell 5.1+。在项目根目录打开 PowerShell 窗口执行。
+
+Worker 启动命令均显式指定 Master 地址。请将 `你的master ip` 替换为实际地址：单机使用 `127.0.0.1`；多机使用 Master 监听的局域网 IP，并按实际情况调整端口。
 
 > **注意**：如果提示"脚本执行被禁止"，以管理员身份执行一次：
 > ```powershell
@@ -261,10 +265,10 @@ dormpool/models/convnext_small-0c510722.pth
 .\start\start_master.ps1 -Bind "127.0.0.1" -Foreground
 
 # 终端 2：启动 Worker A
-.\start\start_worker.ps1 -WorkerId "worker-A" -MaxSlots 10 -Foreground
+.\start\start_worker.ps1 -Master "http://你的master ip:8000" -WorkerId "worker-A" -MaxSlots 10 -Foreground
 
 # 终端 3：启动 Worker B
-.\start\start_worker.ps1 -WorkerId "worker-B" -MaxSlots 10 -Foreground
+.\start\start_worker.ps1 -Master "http://你的master ip:8000" -WorkerId "worker-B" -MaxSlots 10 -Foreground
 
 # 打开浏览器
 start http://127.0.0.1:8000/console
@@ -285,10 +289,10 @@ start http://127.0.0.1:8000/console
 
 ```powershell
 # 第一台 Worker 机器
-.\start\start_worker.ps1 -Master "http://192.168.1.10:8000" -WorkerId "worker-A" -MaxSlots 10 -Foreground
+.\start\start_worker.ps1 -Master "http://你的master ip:8000" -WorkerId "worker-A" -MaxSlots 10 -Foreground
 
 # 第二台 Worker 机器
-.\start\start_worker.ps1 -Master "http://192.168.1.10:8000" -WorkerId "worker-B" -MaxSlots 10 -Foreground
+.\start\start_worker.ps1 -Master "http://你的master ip:8000" -WorkerId "worker-B" -MaxSlots 10 -Foreground
 ```
 
 ### 启动参数速查
@@ -331,6 +335,8 @@ start http://127.0.0.1:8000/console
 
 ## 8. Linux 命令行启动
 
+以下 Worker 命令中的 `你的master ip` 也需替换为实际地址：单机使用 `127.0.0.1`，多机使用 Master 监听的局域网 IP。
+
 ### 场景 A：单机双 Worker
 
 ```bash
@@ -343,21 +349,19 @@ echo $! > logs/master.pid
 sleep 2 && curl -s http://127.0.0.1:8000/ping   # 应返回 {"ok":true,...}
 
 # 终端 2：启动 Worker A
-export MASTER_URL=http://127.0.0.1:8000
 export WORKER_ID=worker-A
 export WORKER_DATA=src/data/worker_data/worker-A
 export MAX_SLOTS=4
 mkdir -p $WORKER_DATA
-python src/worker/main.py --headless &
+python src/worker/main.py --master "http://你的master ip:8000" --headless &
 echo $! > logs/worker-A.pid
 
 # 终端 3：启动 Worker B
-export MASTER_URL=http://127.0.0.1:8000
 export WORKER_ID=worker-B
 export WORKER_DATA=src/data/worker_data/worker-B
 export MAX_SLOTS=4
 mkdir -p $WORKER_DATA
-python src/worker/main.py --headless &
+python src/worker/main.py --master "http://你的master ip:8000" --headless &
 echo $! > logs/worker-B.pid
 ```
 
@@ -379,11 +383,10 @@ echo $! > logs/master.pid
 ```bash
 # 在各自机器上执行，WORKER_ID 保持唯一
 mkdir -p logs src/data/worker_data/worker-A
-export MASTER_URL=http://192.168.1.10:8000
 export WORKER_ID=worker-A
 export WORKER_DATA=src/data/worker_data/worker-A
 export MAX_SLOTS=4
-python src/worker/main.py --headless &
+python src/worker/main.py --master "http://你的master ip:8000" --headless &
 echo $! > logs/worker-A.pid
 ```
 

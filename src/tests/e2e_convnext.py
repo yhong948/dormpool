@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import socket
+import sys
 import tempfile
 import zipfile
 
@@ -17,7 +18,7 @@ from dormpool.src.tests.e2e_local import Harness, http_json, http_bytes, multipa
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--master-python", default=str(REPO_ROOT / ".venv" / "Scripts" / "python.exe"))
+    parser.add_argument("--master-python", default=os.environ.get("DORMPOOL_MASTER_PYTHON", sys.executable))
     args = parser.parse_args()
     os.environ["DORMPOOL_MASTER_PYTHON"] = str(Path(args.master_python).resolve())
     cache = REPO_ROOT / "._tmp" / "cupy-cache"

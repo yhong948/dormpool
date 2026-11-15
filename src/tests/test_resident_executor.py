@@ -160,7 +160,7 @@ class ServiceTests(unittest.TestCase):
         output = io.StringIO()
         def handler(*_):
             raise RuntimeError('CUDA context corrupted')
-        with patch('executor.service.initialize',return_value={'type':'ready','supported_task_types':['toy']}), \
+        with patch('dormpool.src.executor.service.initialize',return_value={'type':'ready','supported_task_types':['toy']}), \
              patch('sys.stdin',io.StringIO(json.dumps(request)+'\n')), \
              patch('sys.stdout',output), patch('sys.stderr',io.StringIO()):
             self.assertEqual(serve({'toy':handler}),2)
@@ -179,7 +179,7 @@ class ServiceTests(unittest.TestCase):
             if len(calls)==2:
                 raise ValueError('bad input')
             return 1
-        with patch('executor.service.initialize', return_value={'type':'ready','supported_task_types':['toy']}), \
+        with patch('dormpool.src.executor.service.initialize', return_value={'type':'ready','supported_task_types':['toy']}), \
              patch('sys.stdin',source), patch('sys.stdout',output), patch('sys.stderr',io.StringIO()):
             self.assertEqual(serve({'toy':handler}),0)
         messages = [json.loads(line) for line in output.getvalue().splitlines()]

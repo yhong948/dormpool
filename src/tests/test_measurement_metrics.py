@@ -41,7 +41,7 @@ class MeasurementTests(unittest.TestCase):
 
     def test_running_job_has_live_rate_but_no_fake_official_zero(self):
         m = MetricsCollector()
-        with __import__('unittest').mock.patch('master.app.m6_metrics.time.time',return_value=20):
+        with __import__('unittest').mock.patch('dormpool.src.master.app.m6_metrics.time.time',return_value=20):
             summary = m.summary({'job_id':'live','created_at':10,'units_total':50,'per_worker_units':{'a':50}})
         self.assertEqual(summary['live']['throughput'],5)
         self.assertIsNone(summary['eta_pool_pct'])
@@ -228,8 +228,8 @@ class MeasurementTests(unittest.TestCase):
         job = jobs.create_job('image_thumb',['input'])
         scheduler = TaskScheduler(jobs,registry)
         assignment = scheduler.assign_task('a',1)
-        with patch('master.app.m4_scheduler._validate',lambda *_:999), \
-             patch('master.app.m4_scheduler._resolve_output',lambda *_:None):
+        with patch('dormpool.src.master.app.m4_scheduler._validate',lambda *_:999), \
+             patch('dormpool.src.master.app.m4_scheduler._resolve_output',lambda *_:None):
             reply = scheduler.commit_result(assignment['attempt']['attempt_id'],'missing',999,None)
         self.assertTrue(reply['failed'])
         self.assertEqual(jobs.ledger(job.job_id)['units_total'],0)

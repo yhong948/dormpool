@@ -29,8 +29,8 @@ image_thumb_gpu uses: verify integrity, not cross-implementation equality.
 
 Weights
 -------
-Loaded from DORMPOOL_CONVNEXT_WEIGHTS, then models/convnext_small-0c510722.pth,
-then the legacy data/convnext_small-0c510722.pth path.
+Loaded from DORMPOOL_CONVNEXT_WEIGHTS, then the project-level
+models/convnext_small-0c510722.pth path, then the legacy data checkpoint.
 The file is the official Torchvision checkpoint, so the architecture is built
 with convnext_small(weights=None) and the state dict loaded from disk — never
 downloaded at task time, which would make an offline demo hang.
@@ -59,7 +59,9 @@ DELAY_ENV = "DORMPOOL_EXECUTOR_DELAY_MS"
 FIXED_DATE_TIME = (1980, 1, 1, 0, 0, 0)
 IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp", ".tif", ".tiff")
 
-REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# This file is project/src/executor/workload/convnext_infer.py. Keep model
+# discovery rooted at the project directory, where models/ is documented.
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 
 class TorchUnavailable(RuntimeError):

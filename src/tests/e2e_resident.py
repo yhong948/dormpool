@@ -34,7 +34,7 @@ def until(fn, timeout=30):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--master-python',default=str(REPO_ROOT/'.venv/Scripts/python.exe'))
+    parser.add_argument('--master-python',default=os.environ.get('DORMPOOL_MASTER_PYTHON', sys.executable))
     args = parser.parse_args()
     os.environ['DORMPOOL_MASTER_PYTHON'] = str(Path(args.master_python).resolve())
     os.environ['CUPY_CACHE_DIR'] = str(REPO_ROOT/'._tmp/cupy-cache')
@@ -100,7 +100,7 @@ def main():
         reference_input = work/'reference-input.zip'
         with zipfile.ZipFile(reference_input,'w') as archive:
             archive.writestr('same.png',raw.getvalue())
-        single = subprocess.run([sys.executable,str(REPO_ROOT/'executor/run.py'),
+        single = subprocess.run([sys.executable,str(REPO_ROOT/'src/executor/run.py'),
                                  'convnext_infer',str(reference_input),str(reference)],
                                 cwd=REPO_ROOT,capture_output=True,text=True,timeout=180)
         assert single.returncode==0,single.stderr

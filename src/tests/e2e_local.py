@@ -30,9 +30,11 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
+REPO_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_PARENT = REPO_ROOT.parent
+for _path in (PROJECT_PARENT, REPO_ROOT):
+    if str(_path) not in sys.path:
+        sys.path.insert(0, str(_path))
 
 HEADERS = {}
 
@@ -113,13 +115,14 @@ class Harness:
     def start_master(self) -> None:
         env = dict(os.environ)
         env.update({
+            "PYTHONPATH": str(PROJECT_PARENT) + os.pathsep + env.get("PYTHONPATH", ""),
 
             "DORMPOOL_DATA": str(self.data_dir),
             "PYTHONUNBUFFERED": "1",
         })
         log = open(self.work_dir / "master.log", "wb")
         proc = subprocess.Popen(
-            [os.environ.get("DORMPOOL_MASTER_PYTHON", sys.executable), "-m", "uvicorn", "master.main:app",
+            [os.environ.get("DORMPOOL_MASTER_PYTHON", sys.executable), "-m", "uvicorn", "src.master.main:app",
              "--host", "127.0.0.1", "--port", str(self.port)],
             cwd=str(REPO_ROOT), env=env, stdout=log, stderr=subprocess.STDOUT,
         )
@@ -131,6 +134,7 @@ class Harness:
     def start_worker(self, name: str, control_port: int = 0) -> subprocess.Popen:
         env = dict(os.environ)
         env.update({
+            "PYTHONPATH": str(PROJECT_PARENT) + os.pathsep + env.get("PYTHONPATH", ""),
             "MASTER_URL": self.base,
 
             "WORKER_ID": name,
@@ -144,7 +148,7 @@ class Harness:
             env["WORKER_CONTROL_PORT"] = str(control_port)
         log = open(self.work_dir / f"{name}.log", "wb")
         proc = subprocess.Popen(
-            [sys.executable, "worker/main.py", "--headless"],
+            [sys.executable, "src/worker/main.py", "--headless"],
             cwd=str(REPO_ROOT), env=env, stdout=log, stderr=subprocess.STDOUT,
         )
         self.children.append(proc)
