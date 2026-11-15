@@ -24,8 +24,8 @@ class MetricsCollector:
         if self._report_path and self._report_path.is_file():
             try:
                 reports = json.loads(self._report_path.read_text(encoding='utf-8'))
-                self._benchmarks = {r['benchmark_id']:r for r in reports
-                                    if r.get('measurements') and r.get('per_device_throughput')}
+                self._benchmarks = {r['benchmark_id']: r for r in reports
+                                    if r.get('measurements') and r.get('p_pool') is not None}
             except (ValueError,KeyError,TypeError) as exc:
                 logging.getLogger('metrics').warning('cannot load benchmark reports: %s',exc)
 
@@ -98,6 +98,83 @@ class MetricsCollector:
                                p_pool=units_total/(finished_at-created_at))
             measurement['resources'] = self.resource_window(measurement.get('workers',[]),created_at,finished_at)
             self._pool_jobs[job_id] = deepcopy(measurement)
+
+    def _save_benchmarks_locked(self):
+        if not self._report_path:
+            return
+        self._report_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = self._report_path.with_suffix('.tmp')
+        temporary.write_text(json.dumps(list(self._benchmarks.values()),
+                                        ensure_ascii=False, indent=2), encoding='utf-8')
+        os.replace(temporary, self._report_path)
+
+    @staticmethod
+    def device_measurements(run):
+        """Observed per-worker throughput; independent baseline rates stay separate."""
+        result = {}
+        for wid in run.get('workers', []):
+            units = run.get('per_worker_units', {}).get(wid, 0)
+            window = run.get('per_worker_windows', {}).get(wid, {})
+            start, end = window.get('started_at'), window.get('finished_at')
+            measured = start is not None and end is not None
+            # Older reports did not retain per-worker timestamps. Use their
+            # recorded Job window explicitly, never summed concurrent durations.
+            elapsed = max(0, end - start) if measured else run['wall_s']
+            result[wid] = dict(units_done=units, processing_s=elapsed,
+                               p_i=units / elapsed if elapsed > 0 else None,
+                               time_source='worker_window' if measured else 'job_window',
+                               started_at=start if measured else run.get('created_at'),
+                               finished_at=end if measured else run.get('finished_at'),
+                               resources=run.get('resources', {}).get(wid, {}),
+                               device=run.get('worker_devices', {}).get(wid, {}))
+        return result
+
+    def _automatic_report(self, run, benchmark_id=None, created_at=None):
+        devices = self.device_measurements(run)
+        rates = {wid: item['p_i'] for wid, item in devices.items()}
+        complete = bool(rates) and all(value is not None for value in rates.values())
+        p_sum = sum(rates.values()) if complete else None
+        p_max = max(rates.values()) if complete else None
+        warnings = []
+        identities = [(d['device'].get('hostname'), d['device'].get('gpu_uuid'))
+                      for d in devices.values()]
+        known = [identity for identity in identities if any(identity)]
+        if len(set(known)) < len(known):
+            warnings.append('参与 Worker 共用物理设备；这是本地并发模拟。')
+        if any(item['time_source'] == 'job_window' for item in devices.values()):
+            warnings.append('历史记录缺少设备起止时间，处理时间采用完整 Job 窗口。')
+        if run.get('failed_attempts'):
+            warnings.append('处理时间包含重试，图片数仅计唯一成功结果。')
+        if run.get('profile_changed'):
+            warnings.append('运行期间设备配置发生变化。')
+        return dict(benchmark_id=benchmark_id or 'auto-' + uuid.uuid4().hex[:8],
+                    name='单机运行测评' if len(devices) == 1 else '多 Worker 运行测评',
+                    created_at=time.time() if created_at is None else created_at,
+                    status='needs_review' if warnings else 'recorded', warnings=warnings,
+                    participants=list(devices), device_metrics=devices,
+                    per_device_throughput=rates, p_pool=run['p_pool'],
+                    eta_pool_pct=run['p_pool'] / p_sum * 100 if p_sum else None,
+                    speedup_S=run['p_pool'] / p_max if p_max else None,
+                    p_sum=p_sum, p_max=p_max, baseline_jobs={}, warmup_jobs={},
+                    pool_job=run['job_id'], measurements={run['job_id']: deepcopy(run)},
+                    unit='verified images/s', mode='automatic_run',
+                    rate_source='observed_worker_window',
+                    conditions={key: run.get(key) for key in
+                                ('task_type', 'input_sha256', 'shard_size', 'correctness_version')})
+
+    def record_automatic_benchmark(self, job_id):
+        """Retain every Job's device timings and observed aggregate metrics."""
+        with self._lock:
+            run = self._pool_jobs.get(job_id)
+            if not run or not run.get('workers'):
+                return None
+            existing = next((r for r in self._benchmarks.values()
+                             if r.get('pool_job') == job_id
+                             and r.get('mode', '').startswith('automatic_')), None)
+            report = self._automatic_report(run, existing['benchmark_id'] if existing else None)
+            self._benchmarks[report['benchmark_id']] = report
+            self._save_benchmarks_locked()
+            return deepcopy(report)
 
     def latest_pool_measurement(self):
         with self._lock:
@@ -182,14 +259,11 @@ class MetricsCollector:
                           eta_pool_pct=eta,speedup_S=speedup,p_sum=p_sum,p_max=p_max,
                           baseline_jobs=baseline_jobs,warmup_jobs=warmup_jobs,pool_job=pool_job,
                           conditions={key:pool[key] for key in conditions},
-                          measurements={jid:runs[jid] for jid in ids},unit='verified images/s')
+                          measurements={jid:runs[jid] for jid in ids},unit='verified images/s',
+                          mode='official')
             updated = {**self._benchmarks,report['benchmark_id']:report}
-            if self._report_path:
-                self._report_path.parent.mkdir(parents=True,exist_ok=True)
-                temporary = self._report_path.with_suffix('.tmp')
-                temporary.write_text(json.dumps(list(updated.values()),ensure_ascii=False,indent=2),encoding='utf-8')
-                os.replace(temporary,self._report_path)
             self._benchmarks = updated
+            self._save_benchmarks_locked()
             return deepcopy(report)
 
     def benchmarks(self):
@@ -198,9 +272,17 @@ class MetricsCollector:
 
     def summary(self, live=None, benchmark_id=None):
         with self._lock:
+            ordered = sorted(self._benchmarks.values(),
+                             key=lambda r: (r.get('created_at', 0), r['benchmark_id']), reverse=True)
             benchmark = deepcopy(self._benchmarks.get(benchmark_id)) if benchmark_id else (
-                deepcopy(list(self._benchmarks.values())[-1]) if self._benchmarks else None)
-            choices = [{'benchmark_id':key,'name':r['name']} for key,r in self._benchmarks.items()]
+                deepcopy(ordered[0]) if ordered else None)
+            if benchmark and benchmark.get('mode', '').startswith('automatic_'):
+                run = benchmark['measurements'][benchmark['pool_job']]
+                benchmark = self._automatic_report(run, benchmark['benchmark_id'], benchmark['created_at'])
+            # One latest record plus up to five older choices; retain full
+            # reports on disk and through the benchmark history API.
+            choices = [{'benchmark_id': r['benchmark_id'], 'name': r['name'],
+                        'created_at': r.get('created_at')} for r in ordered[:6]]
             events = deepcopy(self._node_events[-20:])
             frozen = deepcopy(self._pool_jobs.get((live or {}).get('job_id')))
         now = time.time()

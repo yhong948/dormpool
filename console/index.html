@@ -5,57 +5,343 @@
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>DormPool — 团队算力池</title>
 <style>
+  /* ── tokens ───────────────────────────────────────────────────────────── */
   :root {
-    --bg:#f6f7f9; --surface:#fff; --border:#e3e6ea; --text:#17191c; --muted:#6b7280;
-    --accent:#2f6fdd; --ok:#13803d; --okbg:#e6f5ec;
-    --warn:#8a6100; --warnbg:#fdf3d8;
-    --err:#b32020; --errbg:#fdeaea;
-    --neu:#4b5563; --neubg:#eef0f3;
+    --bg:       #f2f3f7;
+    --surface:  #ffffff;
+    --raised:   #fafbfc;
+    --border:   #e4e6eb;
+    --border-s: #eceef2;
+    --text:     #111318;
+    --muted:    #6b7280;
+    --muted2:   #9ca3af;
+    --accent:   #3b6fe8;
+    --accent-h: #2d5dd4;
+    --ok:       #0d7a3d; --okbg:   #ebfaf2; --okb:  #a7dfc0;
+    --warn:     #795500; --warnbg: #fffbeb; --warnb:#e9cc7a;
+    --err:      #b41c1c; --errbg:  #fef2f2; --errb: #f5a8a8;
+    --neu:      #4b5563; --neubg:  #f3f4f6; --neub: #d1d5db;
+    --r:        12px;
+    --r-sm:     7px;
+    --sh:       0 1px 3px rgba(0,0,0,.07), 0 1px 2px rgba(0,0,0,.04);
+    --sh-sm:    0 1px 2px rgba(0,0,0,.05);
   }
-  *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--text);
-       font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
-       padding:24px 20px 56px}
-  header{max-width:1180px;margin:0 auto 20px;display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
-  h1{font-size:20px;margin:0;font-weight:650}
-  .sub{color:var(--muted);font-size:13px}
-  main{max-width:1180px;margin:0 auto;display:grid;gap:18px}
-  section{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px 18px}
-  h2{font-size:13px;margin:0 0 12px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;font-weight:650}
-  table{width:100%;border-collapse:collapse;font-size:13px}
-  th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--border);vertical-align:middle}
-  th{color:var(--muted);font-weight:600;font-size:12px;white-space:nowrap}
-  tr:last-child td{border-bottom:none}
-  .mono{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:12px}
-  .badge{display:inline-block;padding:1px 8px;border-radius:999px;font-size:11px;font-weight:650;
-         border:1px solid transparent;white-space:nowrap}
-  .b-ok{background:var(--okbg);color:var(--ok);border-color:#bfe3cd}
-  .b-warn{background:var(--warnbg);color:var(--warn);border-color:#f0dda6}
-  .b-err{background:var(--errbg);color:var(--err);border-color:#f3c9c9}
-  .b-neu{background:var(--neubg);color:var(--neu);border-color:#d9dde3}
-  form{display:grid;gap:10px;max-width:420px}
-  label{font-size:12px;color:var(--muted);display:block;margin-bottom:4px;font-weight:600}
-  select,input[type=file]{width:100%;padding:7px 9px;border:1px solid var(--border);border-radius:7px;
-                          background:#fff;font-size:13px;font-family:inherit}
-  button{padding:8px 16px;border:none;border-radius:7px;background:var(--accent);color:#fff;
-         font-size:13px;font-weight:600;cursor:pointer;font-family:inherit}
-  button:hover{filter:brightness(1.06)}
-  button:disabled{opacity:.55;cursor:default}
-  .bar{position:relative;height:7px;background:#eceef1;border-radius:4px;overflow:hidden;min-width:90px}
-  .bar > i{position:absolute;inset:0 auto 0 0;background:var(--accent);border-radius:4px}
-  .meter{height:7px;background:#eceef1;border-radius:4px;overflow:hidden;min-width:80px}
-  .meter > i{display:block;height:100%;background:#4f8fe8}
-  .msg{font-size:12px;margin-top:4px}
-  .ok{color:var(--ok)} .err{color:var(--err)} .muted{color:var(--muted)}
-  .grid3{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:14px}
-  .kpi{border:1px solid var(--border);border-radius:8px;padding:10px 12px}
-  .kpi b{display:block;font-size:20px;font-weight:650;margin-top:2px}
-  .kpi span{font-size:11px;color:var(--muted);letter-spacing:.05em}
-  #banner{display:none;max-width:1180px;margin:0 auto 14px;padding:9px 13px;border-radius:8px;
-          background:var(--errbg);color:var(--err);border:1px solid #f3c9c9;font-size:13px}
-  .events{font-size:12px;color:var(--muted);max-height:170px;overflow:auto}
-  .events div{padding:2px 0;border-bottom:1px dotted var(--border)}
-  @media (max-width:760px){body{padding:16px 12px 40px} section{padding:14px}}
+
+  /* ── reset ────────────────────────────────────────────────────────────── */
+  *, *::before, *::after { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI",
+          "PingFang SC", "Microsoft YaHei", sans-serif;
+    padding: 0 0 72px;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ── sticky header ────────────────────────────────────────────────────── */
+  header {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    box-shadow: var(--sh-sm);
+    max-width: 100%;
+    margin: 0;
+    padding: 0 max(20px, calc(50vw - 590px));
+    height: 54px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }
+
+  h1 {
+    font-size: 15px;
+    margin: 0;
+    font-weight: 700;
+    letter-spacing: -.02em;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  h1::before {
+    content: "◈";
+    color: var(--accent);
+    font-size: 17px;
+    line-height: 1;
+  }
+
+  .sub {
+    color: var(--muted2);
+    font-size: 12px;
+    font-family: ui-monospace, monospace;
+    margin-left: auto;
+  }
+
+  /* ── connection banner ────────────────────────────────────────────────── */
+  #banner {
+    display: none;
+    position: sticky;
+    top: 54px;
+    z-index: 19;
+    max-width: 100%;
+    margin: 0;
+    padding: 9px max(20px, calc(50vw - 590px));
+    background: var(--errbg);
+    color: var(--err);
+    border-bottom: 1px solid var(--errb);
+    font-size: 13px;
+    font-weight: 500;
+  }
+
+  /* ── main grid ────────────────────────────────────────────────────────── */
+  main {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 24px 20px 0;
+    display: grid;
+    gap: 16px;
+  }
+
+  /* ── cards ────────────────────────────────────────────────────────────── */
+  section {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--r);
+    padding: 20px 22px;
+    box-shadow: var(--sh-sm);
+  }
+
+  h2 {
+    font-size: 11px;
+    margin: 0 0 14px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    font-weight: 700;
+  }
+
+  /* ── tables ───────────────────────────────────────────────────────────── */
+  .table-scroll { overflow-x: auto; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+
+  th {
+    text-align: left;
+    padding: 7px 10px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--muted);
+    background: var(--raised);
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+
+  td {
+    text-align: left;
+    padding: 9px 10px;
+    border-bottom: 1px solid var(--border-s);
+    vertical-align: middle;
+  }
+
+  tr:last-child td { border-bottom: none; }
+  tbody tr:hover td { background: #f8f9fb; }
+
+  .mono {
+    font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+    font-size: 12px;
+  }
+
+  /* ── badges ───────────────────────────────────────────────────────────── */
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 9px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 600;
+    white-space: nowrap;
+    letter-spacing: .01em;
+  }
+  .b-ok   { background: var(--okbg);   color: var(--ok);   outline: 1px solid var(--okb); }
+  .b-warn { background: var(--warnbg); color: var(--warn); outline: 1px solid var(--warnb); }
+  .b-err  { background: var(--errbg);  color: var(--err);  outline: 1px solid var(--errb); }
+  .b-neu  { background: var(--neubg);  color: var(--neu);  outline: 1px solid var(--neub); }
+
+  /* ── form ─────────────────────────────────────────────────────────────── */
+  form { display: grid; gap: 12px; max-width: 400px; }
+
+  label {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text);
+    display: block;
+    margin-bottom: 5px;
+  }
+
+  select, input[type=file] {
+    width: 100%;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
+    background: #fff;
+    font-size: 13px;
+    font-family: inherit;
+    color: var(--text);
+    outline: none;
+    transition: border-color .15s, box-shadow .15s;
+  }
+  select:focus, input[type=file]:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(59,111,232,.13);
+  }
+
+  button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 8px 16px;
+    border: none;
+    border-radius: var(--r-sm);
+    background: var(--accent);
+    color: #fff;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    font-family: inherit;
+    transition: background .14s, box-shadow .14s, transform .07s;
+  }
+  button:hover  { background: var(--accent-h); box-shadow: 0 2px 8px rgba(59,111,232,.32); }
+  button:active { transform: scale(.97); }
+  button:disabled { opacity: .5; cursor: default; transform: none; box-shadow: none; }
+
+  /* ── job action buttons ───────────────────────────────────────────────── */
+  .job-actions { display: flex; gap: 6px; white-space: nowrap; }
+  .job-actions button { padding: 4px 10px; font-size: 12px; }
+  .job-actions .delete-job {
+    color: var(--err);
+    background: var(--errbg);
+    border: 1px solid var(--errb);
+    box-shadow: none;
+  }
+  .job-actions .delete-job:hover { background: #fde8e8; box-shadow: none; }
+
+  /* ── progress bar ─────────────────────────────────────────────────────── */
+  .bar {
+    position: relative;
+    height: 5px;
+    background: var(--border);
+    border-radius: 999px;
+    overflow: hidden;
+    min-width: 80px;
+  }
+  .bar > i {
+    position: absolute;
+    inset: 0 auto 0 0;
+    background: linear-gradient(90deg, var(--accent), #7aa4f5);
+    border-radius: 999px;
+    transition: width .4s ease;
+  }
+  .meter { height: 5px; background: var(--border); border-radius: 999px; overflow: hidden; min-width: 80px; }
+  .meter > i { display: block; height: 100%; background: var(--accent); }
+
+  /* ── KPI cards ────────────────────────────────────────────────────────── */
+  .grid3 {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 10px;
+    margin-bottom: 20px;
+  }
+  .kpi {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 16px;
+    background: var(--raised);
+  }
+  .kpi b {
+    display: block;
+    font-size: 26px;
+    font-weight: 700;
+    letter-spacing: -.03em;
+    margin-top: 4px;
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+  }
+  .kpi span { font-size: 11px; color: var(--muted); letter-spacing: .02em; font-weight: 500; }
+
+  /* ── events log ───────────────────────────────────────────────────────── */
+  .events {
+    font-size: 12px;
+    color: var(--muted);
+    max-height: 180px;
+    overflow-y: auto;
+    scrollbar-width: thin;
+  }
+  .events div {
+    padding: 5px 2px;
+    border-bottom: 1px solid var(--border-s);
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+  }
+  .events div:last-child { border-bottom: none; }
+
+  /* ── details / evidence ───────────────────────────────────────────────── */
+  details { margin-top: 16px; }
+  details summary {
+    font-size: 12px;
+    color: var(--muted);
+    cursor: pointer;
+    user-select: none;
+    font-weight: 500;
+  }
+  details summary:hover { color: var(--text); }
+  details pre {
+    margin: 8px 0 0;
+    padding: 10px 14px;
+    background: var(--raised);
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
+    font-size: 11px;
+    font-family: ui-monospace, monospace;
+    overflow: auto;
+    max-height: 320px;
+    white-space: pre-wrap;
+    color: var(--muted);
+    line-height: 1.6;
+  }
+
+  /* ── utility ──────────────────────────────────────────────────────────── */
+  .msg   { font-size: 12px; margin-top: 6px; }
+  .ok    { color: var(--ok); }
+  .err   { color: var(--err); }
+  .muted { color: var(--muted); }
+
+  p.muted {
+    font-size: 12px;
+    margin: 0 0 14px;
+    line-height: 1.6;
+  }
+
+  /* ── selects in metrics ───────────────────────────────────────────────── */
+  section select { max-width: 340px; margin-bottom: 10px; }
+
+  /* ── section divider ──────────────────────────────────────────────────── */
+  .divider {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 20px 0;
+  }
+
+  /* ── responsive ───────────────────────────────────────────────────────── */
+  @media (max-width: 760px) {
+    main { padding: 14px 12px 0; gap: 12px; }
+    section { padding: 16px 14px; }
+    .grid3 { grid-template-columns: repeat(2, 1fr); }
+    .kpi b { font-size: 22px; }
+  }
 </style>
 </head>
 <body>
@@ -63,7 +349,6 @@
   <h1>DormPool · 团队算力池</h1>
   <span class="sub" id="endpoint"></span>
 </header>
-
 <div id="banner">与 Master 的连接中断，正在重试…</div>
 
 <main>
@@ -72,33 +357,51 @@
     <form id="submitForm">
       <div>
         <label for="taskType">任务类型</label>
-        <select id="taskType"><option value="convnext_infer" selected>convnext_infer — GPU 图像分类</option><option value="image_thumb">image_thumb — CPU 缩略图</option><option value="image_thumb_gpu">image_thumb_gpu — GPU 缩略图</option></select>
+        <select id="taskType">
+          <option value="convnext_infer" selected>convnext_infer — GPU 图像分类</option>
+          <option value="image_thumb">image_thumb — CPU 缩略图</option>
+          <option value="image_thumb_gpu">image_thumb_gpu — GPU 缩略图</option>
+        </select>
       </div>
       <div>
         <label for="inputFile">输入文件（zip，内含图片）</label>
         <input type="file" id="inputFile" accept=".zip"/>
       </div>
-      <div><button type="submit" id="submitBtn">提交</button></div>
+      <div>
+        <button type="submit" id="submitBtn">↑ 提交任务</button>
+      </div>
       <div class="msg" id="submitMsg"></div>
     </form>
   </section>
 
   <section>
     <h2>任务列表</h2>
+    <div class="table-scroll">
     <table>
-      <thead><tr><th>Job</th><th>类型</th><th>进度</th><th>状态</th><th>结果</th></tr></thead>
-      <tbody id="jobsBody"><tr><td colspan="5" class="muted">加载中…</td></tr></tbody>
+      <thead><tr><th>Job</th><th>类型</th><th>进度</th><th>状态</th><th>结果</th><th>操作</th></tr></thead>
+      <tbody id="jobsBody"><tr><td colspan="6" class="muted">加载中…</td></tr></tbody>
     </table>
+    </div>
+    <div class="msg muted">暂停后，正在执行的分片会完成，剩余分片等待恢复。删除会移除任务及其在 Master 上的输入和结果文件。</div>
+    <div class="msg" id="jobMsg" role="status" aria-live="polite"></div>
   </section>
 
   <section>
     <h2>节点</h2>
-    <p class="muted">CPU/GPU 为整台设备的采样值，GPU% 是采样周期中的繁忙时间比例，不是 FLOPS 或显存占用率。悬停可查看采样来源、设备与缺失原因。</p>
+    <p class="muted">CPU/GPU 为整台设备的采样值；GPU% 是采样周期中的繁忙时间比例，不是 FLOPS 或显存占用率。悬停 GPU% 可查看采样来源与缺失原因。</p>
+    <div class="table-scroll">
     <table>
-      <thead><tr><th>Worker</th><th>主机</th><th>连接</th><th>贡献</th><th>执行</th>
-             <th>空闲槽位</th><th>CPU%</th><th>GPU%</th><th>能力</th></tr></thead>
+      <thead><tr>
+        <th>Worker</th><th>主机</th>
+        <th>连接</th><th>贡献</th><th>执行</th>
+        <th>空闲槽位</th>
+        <th title="CPU 利用率（psutil 采样）">CPU%</th>
+        <th title="GPU 繁忙时间比例（NVML 采样）；悬停查看采样详情">GPU%</th>
+        <th>能力</th>
+      </tr></thead>
       <tbody id="workersBody"><tr><td colspan="9" class="muted">加载中…</td></tr></tbody>
     </table>
+    </div>
   </section>
 
   <section>
@@ -111,22 +414,28 @@
       <div class="kpi"><span>测量窗口（秒）</span><b id="liveSeconds">—</b></div>
     </div>
     <p class="muted">实时吞吐 = 本 Job 已验证且唯一确认的图片数 ÷ 提交以来的时间；完整 Job 包含结果汇总时间。运行数据不作为独立单机基线。</p>
-    <h2>正式评测 · Measurement &amp; Fairness</h2>
-    <select id="benchmarkSelect"><option value="">最新评测记录</option></select>
-    <p id="benchmarkStatus" class="muted">尚未建立独立单机基线和池测量，S、η 暂不可计算。</p>
+
+    <hr class="divider"/>
+    <h2>设备测评</h2>
+    <select id="benchmarkSelect" aria-label="测评记录"><option value="">最新记录</option></select>
+    <p id="benchmarkStatus" class="muted">完成任务后，自动记录每台设备的 P_i 和处理时间。</p>
+    <div class="table-scroll">
+    <table>
+      <thead><tr><th>设备 / Worker</th><th>处理时间</th><th>已验证图片</th><th>平均 CPU / GPU</th></tr></thead>
+      <tbody id="metricsBody"><tr><td colspan="4" class="muted">暂无数据</td></tr></tbody>
+    </table>
+    </div>
+    <p class="muted" id="metricDefinition"></p>
+    <p id="poolScope" class="muted"></p>
+
+    <hr class="divider"/>
+    <h2>测评汇总</h2>
     <div class="grid3">
       <div class="kpi"><span>η_pool · 聚合效率</span><b id="kEta">—</b></div>
       <div class="kpi"><span>加速比 S</span><b id="kS">—</b></div>
       <div class="kpi"><span>P_pool（已验证图片/秒）</span><b id="kPool">—</b></div>
-      <div class="kpi"><span>参与设备数</span><b id="kRecords">—</b></div>
+      <div class="kpi"><span id="participantLabel">参与 Worker 数</span><b id="kRecords">—</b></div>
     </div>
-    <table>
-      <thead><tr><th>设备 / 独立基线 Job</th><th>P_i（已验证图片/秒）</th><th>窗口、有效图片 / 资源平均值</th></tr></thead>
-      <tbody id="metricsBody"><tr><td colspan="3" class="muted">暂无数据</td></tr></tbody>
-    </table>
-    <p class="muted">P_i：各设备独立运行的稳定有效吞吐；P_pool：固定参与集合经统一入口测得的有效总吞吐。η_pool = P_pool / ΣP_i × 100%；S = P_pool / max(P_i)。它们不是 GPU FLOPS 利用率。</p>
-    <p id="poolScope" class="muted"></p>
-    <table><thead><tr><th>池测量参与设备</th><th>窗口平均 CPU / GPU</th><th>GPU 采样覆盖率</th></tr></thead><tbody id="poolResources"></tbody></table>
     <details><summary>评测来源与计算依据</summary><pre id="benchmarkEvidence" style="white-space:pre-wrap">暂无评测记录</pre></details>
   </section>
 
@@ -253,7 +562,8 @@
           return r.json();
         });
       msg.className = "msg ok";
-      msg.textContent = "已提交 " + data.job_id + " · " + data.total_tasks + " 个任务";
+      msg.textContent = "已提交 " + data.job_id + " · " +
+        (data.total_units || data.total_tasks) + (data.total_units ? " 张图片" : " 个任务");
       el("inputFile").value = "";
       loadJobs();
     } catch (error) {
@@ -265,6 +575,9 @@
   });
 
   // ── jobs ─────────────────────────────────────────────────────────────────
+  const pendingJobActions = new Set();
+  let jobsRevision = 0;
+
   function renderJobs(payload) {
     const selectedJob = el("metricsJob").value;
     el("metricsJob").innerHTML = '<option value="">最新 Job</option>' + (payload.jobs || []).map(function (j) {
@@ -275,22 +588,33 @@
     lastData.jobs = jobs;
     const body = el("jobsBody");
     if (!jobs.length) {
-      body.innerHTML = '<tr><td colspan="5" class="muted">暂无任务</td></tr>';
+      body.innerHTML = '<tr><td colspan="6" class="muted">暂无任务</td></tr>';
       return;
     }
-    const order = ["queued", "running", "completed", "failed"];
+    const order = ["completed", "failed", "paused", "queued", "running"];
     const sorted = jobs.slice().sort(function (a, b) {
       const rank = order.indexOf(b.status) - order.indexOf(a.status);
       return rank !== 0 ? rank : (b.created_at || 0) - (a.created_at || 0);
     });
     body.innerHTML = sorted.map(function (job) {
-      const total = job.total_tasks || 0;
-      const done = job.done_tasks || 0;
+      const byUnits = Number(job.total_units || 0) > 0;
+      const total = byUnits ? job.total_units : (job.total_tasks || 0);
+      const done = byUnits ? (job.done_units || 0) : (job.done_tasks || 0);
       const pct = total > 0 ? Math.round((done / total) * 100) : 0;
       let kind = "neu";
       if (job.status === "completed") kind = "ok";
       else if (job.status === "failed") kind = "err";
       else if (job.status === "running") kind = "warn";
+      else if (job.status === "paused") kind = "warn";
+      const disabled = pendingJobActions.has(job.job_id) ? " disabled" : "";
+      const jobAttr = ' data-job-id="' + esc(job.job_id) + '"';
+      let actions = "";
+      if (job.status === "queued" || job.status === "running") {
+        actions += '<button type="button" data-job-action="pause"' + jobAttr + disabled + '>暂停</button>';
+      } else if (job.status === "paused") {
+        actions += '<button type="button" data-job-action="resume"' + jobAttr + disabled + '>恢复</button>';
+      }
+      actions += '<button type="button" class="delete-job" data-job-action="delete"' + jobAttr + disabled + '>删除</button>';
       const link = job.status === "completed"
         ? '<a href="' + MASTER + "/jobs/" + encodeURIComponent(job.job_id) + '/result">下载</a>'
         : '<span class="muted">—</span>';
@@ -299,17 +623,52 @@
         "<td>" + esc(job.task_type) + "</td>" +
         '<td><div style="display:flex;align-items:center;gap:8px">' +
           '<div class="bar"><i style="width:' + pct + '%"></i></div>' +
-          '<span class="mono">' + done + "/" + total + "</span></div></td>" +
-        "<td>" + badge(kind, job.status) + "</td>" +
+          '<span class="mono">' + done + "/" + total + (byUnits ? " 张" : " 个任务") + "</span></div></td>" +
+        "<td>" + badge(kind, job.status === "paused" ? "已暂停" : job.status) + "</td>" +
         "<td>" + link + "</td>" +
+        '<td><div class="job-actions">' + actions + '</div></td>' +
         "</tr>";
     }).join("");
   }
 
   async function loadJobs() {
-    try { renderJobs(await call("/jobs")); reportOk(); }
+    const revision = jobsRevision;
+    try {
+      const payload = await call("/jobs");
+      if (revision === jobsRevision) renderJobs(payload);
+      reportOk();
+    }
     catch (error) { reportFail(error); }
   }
+
+  el("jobsBody").addEventListener("click", async function (event) {
+    const button = event.target.closest("button[data-job-action]");
+    if (!button || button.disabled) return;
+    const jobId = button.dataset.jobId;
+    const action = button.dataset.jobAction;
+    if (pendingJobActions.has(jobId)) return;
+    if (action === "delete" && !window.confirm("删除任务 " + jobId + "？其输入和结果文件也会删除，无法恢复。")) return;
+    const msg = el("jobMsg");
+    pendingJobActions.add(jobId);
+    renderJobs({ jobs: lastData.jobs });
+    msg.className = "msg muted";
+    msg.textContent = "正在处理 " + jobId + "…";
+    try {
+      const path = "/jobs/" + encodeURIComponent(jobId);
+      await call(action === "delete" ? path : path + "/" + action,
+                 { method: action === "delete" ? "DELETE" : "POST" });
+      jobsRevision += 1;
+      msg.className = "msg ok";
+      msg.textContent = ({ pause: "已暂停", resume: "已恢复", delete: "已删除" })[action] + " " + jobId;
+    } catch (error) {
+      msg.className = "msg err";
+      msg.textContent = "操作失败：" + error.message;
+    } finally {
+      pendingJobActions.delete(jobId);
+      await loadJobs();
+      renderJobs({ jobs: lastData.jobs });
+    }
+  });
 
   // ── workers ──────────────────────────────────────────────────────────────
   function renderWorkers(payload) {
@@ -328,6 +687,7 @@
       else if (w.contrib_state === "draining") contrib = badge("warn", "draining");
       const exec = w.exec_state === "busy" ? badge("warn", "busy") : badge("neu", "idle");
       const gpu = w.gpu_name ? esc(w.gpu_name) : "—";
+      const taskTypes = (w.supported_task_types || []).map(esc).join(", ") || "无已就绪任务类型";
       return "<tr>" +
         '<td class="mono">' + esc(w.worker_id) + "</td>" +
         "<td>" + esc(w.hostname) + "</td>" +
@@ -340,7 +700,8 @@
         (w.conn_state !== "online" ? "离线" : !(w.resource_sample || {}).sampled_at ? "等待采样" :
          (w.resource_sample || {}).stale ? "采样过期" :
          w.gpu_pct === null || w.gpu_pct === undefined ? "不可用" : dash(w.gpu_pct) + "%") + "</td>" +
-        '<td class="mono">' + w.cpu_cores + "c / " + dash(w.ram_gb) + "GB / " + gpu + "</td>" +
+        '<td class="mono">' + w.cpu_cores + "c / " + dash(w.ram_gb) + "GB / " + gpu +
+          '<br><span class="muted">任务：' + taskTypes + '</span></td>' +
         "</tr>";
     }).join("");
   }
@@ -361,44 +722,69 @@
     el("liveScope").textContent = (live.job_id || '暂无 Job') + ' · ' + (live.task_type || '') + ' · ' +
       (live.status || '') + ' · 更新于 ' + new Date(m.generated_at*1000).toLocaleTimeString();
     const selection = el("benchmarkSelect").value;
-    el("benchmarkSelect").innerHTML = '<option value="">最新评测记录</option>' + (m.benchmark_choices || []).map(function (b) {
-      return '<option value="' + esc(b.benchmark_id) + '">' + esc(b.name || b.benchmark_id) + '</option>';
+    const records = (m.benchmark_choices || []).slice().sort(function (a, b) {
+      return (b.created_at || 0) - (a.created_at || 0) || b.benchmark_id.localeCompare(a.benchmark_id);
+    });
+    const history = records.slice(1, 6);
+    el("benchmarkSelect").innerHTML = '<option value="">最新记录</option>' + history.map(function (b, index) {
+      const stamp = b.created_at === null || b.created_at === undefined ? '时间未知' :
+        new Date(b.created_at * 1000).toLocaleString('zh-CN', {
+          timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
+          hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
+        });
+      return '<option value="' + esc(b.benchmark_id) + '">历史记录 ' + (index + 1) + ' · ' +
+        esc(stamp) + '</option>';
     }).join('');
-    el("benchmarkSelect").value = selection;
-    el("kEta").textContent = benchmark ? Number(benchmark.eta_pool_pct).toFixed(1)+'%' : '—';
-    el("kS").textContent = benchmark ? Number(benchmark.speedup_S).toFixed(2)+'×' : '—';
-    el("kPool").textContent = benchmark ? Number(benchmark.p_pool).toFixed(2) : '—';
+    const selectedExists = history.some(function (b) { return b.benchmark_id === selection; });
+    el("benchmarkSelect").value = selectedExists ? selection : '';
+    if (selection && !selectedExists) {
+      // A selected record can age out when new Jobs finish. Reload latest so
+      // the selector and displayed metrics continue to refer to the same run.
+      loadMetrics();
+      return;
+    }
+    el("kEta").textContent = benchmark && benchmark.eta_pool_pct !== null && benchmark.eta_pool_pct !== undefined
+      ? Number(benchmark.eta_pool_pct).toFixed(1)+'%' : '—';
+    el("kS").textContent = benchmark && benchmark.speedup_S !== null && benchmark.speedup_S !== undefined
+      ? Number(benchmark.speedup_S).toFixed(2)+'×' : '—';
+    el("kPool").textContent = benchmark && benchmark.p_pool !== null && benchmark.p_pool !== undefined
+      ? Number(benchmark.p_pool).toFixed(2) : '—';
     el("kRecords").textContent = benchmark ? benchmark.participants.length : '—';
-    el("benchmarkStatus").textContent = !benchmark ? '尚未建立独立单机基线和池测量，S、η 暂不可计算。请运行评测流程。' :
-      (benchmark.status === 'ready' ? '可比测量' : '待复核，不能直接作为正式结果') + ' · ' +
+    const observed = benchmark && (benchmark.mode || '').indexOf('automatic_') === 0;
+    const benchmarkLabel = observed ? '本次运行测评' : '独立基线测评';
+    el("benchmarkStatus").textContent = !benchmark ? '尚未建立测评记录。完成任务后系统会自动生成单机或池化测评数据。' :
+      benchmarkLabel + ' · ' + (benchmark.status === 'ready' ? '可比测量' :
+        benchmark.status === 'recorded' ? '已记录' : '待复核') + ' · ' +
       (benchmark.warnings || []).map(measurementWarning).join('；');
     el("benchmarkEvidence").textContent = benchmark ? JSON.stringify(benchmark,null,2) : '暂无独立基线。计算规则和评测命令见 docs/GPU采样与评测指标门禁.md。';
     const poolRun = benchmark ? benchmark.measurements[benchmark.pool_job] : null;
-    el("poolScope").textContent = poolRun ? '池测量 ' + poolRun.job_id + ' · ' + Number(poolRun.wall_s).toFixed(2) + ' 秒 · ' + poolRun.units_total +
+    el("metricDefinition").textContent = observed
+      ? '本次运行 P_i = 各 Worker 已验证图片数 ÷ 处理时间。处理时间为首次领取任务至最后结果提交的墙钟时间，包含等待和重试，并发分片不重复累加。P_pool = 全部已验证图片数 ÷ 完整 Job 时间（含上传、调度和结果汇总）。η_pool = P_pool / ΣP_i × 100%；S = P_pool / max(P_i)。这是本次运行对比，独立单机基线测评可在记录中查看。'
+      : '独立基线 P_i = 每台设备独立完成相同输入的已验证图片数 ÷ 基线 Job 时间。P_pool 来自池化 Job 的完整墙钟时间；η_pool = P_pool / ΣP_i × 100%；S = P_pool / max(P_i)。';
+    el("poolScope").textContent = poolRun ? 'Job ' + poolRun.job_id + ' · 总耗时 ' + Number(poolRun.wall_s).toFixed(2) + ' 秒 · ' + poolRun.units_total +
       ' 张 · ' + new Date(poolRun.created_at*1000).toLocaleString() + ' → ' + new Date(poolRun.finished_at*1000).toLocaleString() : '';
-    el("poolResources").innerHTML = poolRun ? benchmark.participants.map(function (wid) {
-      const r = (poolRun.resources || {})[wid] || {};
-      return '<tr><td>'+esc(wid)+'</td><td>CPU '+percent(r.avg_cpu_pct)+'，GPU '+percent(r.avg_gpu_pct)+
-        '</td><td>'+Number((r.gpu_pct_coverage || 0)*100).toFixed(0)+'%</td></tr>';
-    }).join('') : '<tr><td colspan="3" class="muted">无池测量记录</td></tr>';
-
     const perDevice = benchmark ? benchmark.per_device_throughput : {};
-    const keys = Object.keys(perDevice).sort();
+    const keys = benchmark ? benchmark.participants.slice().sort() : [];
     const body = el("metricsBody");
     if (!keys.length) {
-      body.innerHTML = '<tr><td colspan="3" class="muted">尚无独立单机基线；运行中设备贡献速率不等于 P_i。</td></tr>';
+      body.innerHTML = '<tr><td colspan="4" class="muted">任务完成后显示每台设备的处理时间与 P_i。</td></tr>';
     } else {
-      const peak = Math.max.apply(null, keys.map(function (k) { return perDevice[k]; })) || 1;
       body.innerHTML = keys.map(function (k) {
         const value = perDevice[k];
-        const run = benchmark.measurements[benchmark.baseline_jobs[k]];
-        const resource = (run.resources || {})[k] || {};
+        const device = (benchmark.device_metrics || {})[k];
+        const run = observed ? poolRun : benchmark.measurements[(benchmark.baseline_jobs || {})[k]];
+        const resource = device ? device.resources || {} : ((run || {}).resources || {})[k] || {};
+        const seconds = device ? device.processing_s : run && run.wall_s;
+        const units = device ? device.units_done : run && run.units_total;
+        const duration = seconds === null || seconds === undefined ? '—' : Number(seconds).toFixed(2) + ' 秒';
+        const rate = value === null || value === undefined ? '—' : Number(value).toFixed(3) + ' 张/秒';
+        const source = device && device.time_source === 'job_window' ? ' · 历史 Job 窗口' : '';
         return "<tr>" +
-          '<td class="mono">' + esc(k) + '<br>' + esc(run.job_id) + "</td>" +
-          '<td class="mono">' + Number(value).toFixed(3) + "</td>" +
-          '<td>' + Number(run.wall_s).toFixed(2) + ' 秒 / ' + run.units_total + ' 张；CPU ' + percent(resource.avg_cpu_pct) +
-          '，GPU ' + percent(resource.avg_gpu_pct) + '；GPU 覆盖 ' + Number((resource.gpu_pct_coverage || 0)*100).toFixed(0) + '%</td>' +
-          "</tr>";
+          '<td class="mono">' + esc(k) + '<br>' + esc((run || {}).job_id) + "</td>" +
+          '<td>' + duration + source + '</td><td>' + (units === undefined ? '—' : esc(units)) + ' 张</td>' +
+          '<td>CPU ' + percent(resource.avg_cpu_pct) + '，GPU ' + percent(resource.avg_gpu_pct) +
+          '；GPU 覆盖 ' + Number((resource.gpu_pct_coverage || 0)*100).toFixed(0) + '%</td></tr>' +
+          '<tr><td class="mono">P_i · ' + esc(k) + '</td><td colspan="3"><b>' + rate + '</b></td></tr>';
       }).join("");
     }
 
@@ -416,10 +802,17 @@
   }
 
   async function loadMetrics() {
+    const selection = el("benchmarkSelect").value;
+    const selectedJob = el("metricsJob").value;
     const query = new URLSearchParams();
-    if (el("metricsJob").value) query.set('job_id',el("metricsJob").value);
-    if (el("benchmarkSelect").value) query.set('benchmark_id',el("benchmarkSelect").value);
-    try { renderMetrics(await call("/metrics/summary?"+query.toString())); reportOk(); }
+    if (selectedJob) query.set('job_id', selectedJob);
+    if (selection) query.set('benchmark_id', selection);
+    try {
+      const payload = await call("/metrics/summary?" + query.toString());
+      if (selection !== el("benchmarkSelect").value || selectedJob !== el("metricsJob").value) return;
+      renderMetrics(payload);
+      reportOk();
+    }
     catch (error) { reportFail(error); }
   }
 

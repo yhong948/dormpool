@@ -285,7 +285,7 @@ class TaskScheduler:
                 output_ref=output_ref,
                 units_done=verified_units,
             )
-            self._jobs.mark_task_done(task_id, output_ref)
+            self._jobs.mark_task_done(task_id, output_ref, verified_units)
 
         # Record only on the success path, once per attempt (technical point J1).
         if _on_success and accepted_units >= 0:

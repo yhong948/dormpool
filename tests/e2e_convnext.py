@@ -61,6 +61,12 @@ def main():
         metrics = http_json(harness.base + "/metrics/summary")
         (work / "metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
         assert metrics["p_pool"] > 0, metrics
+        report = metrics['benchmark']
+        device = report['device_metrics']['convnext-gpu']
+        assert device['units_done'] == 2 and device['processing_s'] > 0, device
+        assert device['time_source'] == 'worker_window', device
+        assert abs(device['p_i'] - 2 / device['processing_s']) < 1e-9, device
+        assert report['eta_pool_pct'] is not None and report['speedup_S'] is not None, report
         log = (work / "convnext-gpu.log").read_text(encoding="utf-8", errors="replace")
         assert "device=cuda" in log, log
         print("PASS: 2 GPU tasks, validated combined predictions and logits, metrics recorded.")

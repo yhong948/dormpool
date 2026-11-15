@@ -350,8 +350,15 @@ def main(argv=None) -> int:
         print(f"    p_pool={metrics['p_pool']} ({metrics['p_pool_source']}) "
               f"eta={metrics['eta_pool_pct']} S={metrics['speedup_S']}")
         assert metrics["p_pool"] > 0, "P_pool must be measured from the job wall clock"
-        # P_i is intentionally empty until matching independent baseline jobs
-        # have been measured; this round-trip gate validates pool wall time.
+        # Every completed run publishes device timings and observed rates.
+        report = metrics['benchmark']
+        assert report['mode'] == 'automatic_run', report
+        assert report['eta_pool_pct'] is not None and report['speedup_S'] is not None, report
+        assert set(report['device_metrics']) == set(claims['workers']), report
+        assert sum(d['units_done'] for d in report['device_metrics'].values()) == args.images, report
+        for device in report['device_metrics'].values():
+            assert device['processing_s'] > 0 and device['time_source'] == 'worker_window', device
+            assert abs(device['p_i'] - device['units_done'] / device['processing_s']) < 1e-9, device
         if metrics["per_device_throughput"]:
             assert set(metrics["per_device_throughput"]).issubset(set(claims["workers"])), \
                 "throughput reported for a worker that never succeeded"

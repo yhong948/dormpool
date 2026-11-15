@@ -18,11 +18,7 @@ def emit(message):
 
 def initialize():
     start = time.perf_counter()
-    from executor.workload.image_thumb_gpu import gpu_summary
-    gpu = gpu_summary()
     supported = ["image_thumb"]
-    if gpu.get("available"):
-        supported.append("image_thumb_gpu")
     try:
         import torch
         torch.set_num_threads(max(1, int(os.environ.get("DORMPOOL_TORCH_THREADS", "2"))))
@@ -41,6 +37,14 @@ def initialize():
         supported.append("convnext_infer")
     except Exception as exc:
         convnext = {"available": False, "reason": str(exc)}
+
+    # On Windows, initialize PyTorch's CUDA libraries before CuPy can load
+    # libraries from a different CUDA toolkit into this process. Importing
+    # CuPy first can make the ConvNeXt warm-up fail with CUBLAS_NOT_INITIALIZED.
+    from executor.workload.image_thumb_gpu import gpu_summary
+    gpu = gpu_summary()
+    if gpu.get("available"):
+        supported.append("image_thumb_gpu")
     implementation = hashlib.sha256()
     for path in sorted((Path(__file__).parent / "workload").glob("*.py")):
         implementation.update(path.name.encode())

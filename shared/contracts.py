@@ -93,6 +93,8 @@ class Job:
     status:      JobStatus      = JobStatus.QUEUED
     total_tasks: int            = 0
     done_tasks:  int            = 0
+    total_units: int            = 0   # validated input units, e.g. images
+    done_units:  int            = 0   # validated output units
     created_at:  float          = field(default_factory=time.time)
     finished_at: Optional[float]= None
     output_ref:  Optional[str]  = None

@@ -62,7 +62,8 @@ class JobManager:
     # ── creation ─────────────────────────────────────────────────────────────
 
     def create_job(self, task_type: str, input_refs: List[str],
-                   input_zip_ref: str = "", job_id: Optional[str] = None, worker_ids=None, created_at=None) -> Job:
+                   input_zip_ref: str = "", job_id: Optional[str] = None, worker_ids=None,
+                   created_at=None, total_units: int = 0) -> Job:
         """Create a Job whose Tasks are one per shard reference.
 
         input_refs is produced by M5 when it splits the uploaded archive.
@@ -77,6 +78,7 @@ class JobManager:
             status=JobStatus.QUEUED,
             created_at=time.time() if created_at is None else created_at,
             total_tasks=total,
+            total_units=max(0, int(total_units or 0)),
         )
         tasks = [
             Task(
@@ -183,6 +185,7 @@ class JobManager:
             units_total = 0
             per_worker_units: Dict[str, float] = {}
             per_worker_busy: Dict[str, float] = {}
+            per_worker_windows = {}
             succeeded = 0
             workers, profiles, devices = set(), {}, {}
             failed_attempts = 0
@@ -192,6 +195,12 @@ class JobManager:
                     wid = attempt.get('worker_id')
                     if wid:
                         workers.add(wid)
+                        start = attempt.get('started_at')
+                        end = attempt.get('finished_at') or time.time()
+                        if start is not None:
+                            window = per_worker_windows.setdefault(wid, {'started_at': start, 'finished_at': end})
+                            window['started_at'] = min(window['started_at'], start)
+                            window['finished_at'] = max(window['finished_at'], end)
                         profile = attempt.get('execution_profile',{})
                         if wid in profiles and profiles[wid] != profile:
                             profile_changed = True
@@ -221,6 +230,7 @@ class JobManager:
                 "succeeded_attempts": succeeded,
                 "per_worker_units": per_worker_units,
                 "per_worker_busy": per_worker_busy,
+                "per_worker_windows": per_worker_windows,
                 "workers": sorted(workers), "execution_profiles": profiles, "worker_devices": devices,
                 "failed_attempts": failed_attempts, "profile_changed": profile_changed,
             }
@@ -266,7 +276,7 @@ class JobManager:
                 task.status = TaskStatus.RUNNING
             task.assigned_worker = worker_id
 
-    def mark_task_done(self, task_id: str, output_ref: str) -> Optional[str]:
+    def mark_task_done(self, task_id: str, output_ref: str, units_done: int = 0) -> Optional[str]:
         """Mark a task SUCCEEDED. Returns the job_id when the job just completed."""
         with self._lock:
             task = self._task_index.get(task_id)
@@ -282,6 +292,18 @@ class JobManager:
                 1 for t in self._tasks.get(job.job_id, [])
                 if t.status == TaskStatus.SUCCEEDED
             )
+            # Progress is reported in validated input units (images) when the
+            # executor supplies them. Retries cannot double count because only
+            # the succeeded attempt for each logical Task contributes.
+            completed_units = 0
+            for completed_task in self._tasks.get(job.job_id, []):
+                if completed_task.status != TaskStatus.SUCCEEDED:
+                    continue
+                successes = [a for a in self._attempts.get(completed_task.task_id, [])
+                             if a.get('status') == AttemptStatus.SUCCEEDED.value]
+                if successes:
+                    completed_units += int(successes[-1].get('units_done') or 0)
+            job.done_units = completed_units
             if job.status == JobStatus.QUEUED:
                 job.status = JobStatus.RUNNING
 

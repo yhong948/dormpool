@@ -45,7 +45,7 @@ param(
     [int]$Port = 8000,
     [string]$Python,
     [string]$DataDir = "data",
-    [int]$ShardSize = 1,
+    [int]$ShardSize = 50,
     [switch]$KillIfBusy,
     [switch]$Foreground
 )

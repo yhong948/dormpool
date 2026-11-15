@@ -116,8 +116,12 @@ def _on_job_completed(job_id: str) -> None:
         workers=ledger['workers'], execution_profiles=ledger['execution_profiles'],
         worker_devices=ledger['worker_devices'], failed_attempts=ledger['failed_attempts'],
         profile_changed=ledger['profile_changed'], per_worker_units=ledger['per_worker_units'],
+        per_worker_windows=ledger['per_worker_windows'],
         succeeded_attempts=ledger['succeeded_attempts'],
     )
+    # Every Job gets its own observed timing report. Independent benchmark
+    # reports from /metrics/benchmarks retain their separate provenance.
+    METRICS.record_automatic_benchmark(job_id)
 
 
 REGISTRY_EVENTS = METRICS
@@ -184,17 +188,20 @@ async def submit_job(request: Request, task_type: str = Form("convnext_infer"), 
     refs = await run_in_threadpool(DATA.split_job_input, job_id, input_ref, shard_size())
     if not refs:
         raise HTTPException(status_code=400, detail="no images found in the uploaded archive")
+    total_units = await run_in_threadpool(DATA.count_images, input_ref)
 
     input_hash = await run_in_threadpool(lambda: hashlib.sha256(payload).hexdigest())
     validator_hash = hashlib.sha256((Path(__file__).parent/'c3_validation.py').read_bytes()).hexdigest()
     METRICS.register_job(job_id, task_type=task_type, input_sha256=input_hash,
                          shard_size=shard_size(), correctness_version=validator_hash)
     job = JOBS.create_job(task_type, refs, input_zip_ref=input_ref, job_id=job_id,
-                          worker_ids=allowed, created_at=submitted_at)
+                          worker_ids=allowed, created_at=submitted_at,
+                          total_units=total_units)
 
     return {
         "job_id": job.job_id,
         "total_tasks": job.total_tasks,
+        "total_units": job.total_units,
         "status": job.status.value,
         "task_type": job.task_type,
     }
